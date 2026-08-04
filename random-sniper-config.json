@@ -1,0 +1,33 @@
+{
+  "ebay_token_url": "https://api.ebay.com/identity/v1/oauth2/token",
+  "ebay_search_url": "https://api.ebay.com/buy/browse/v1/item_summary/search",
+  "marketplace_id": "EBAY_GB",
+  "delivery_country": "GB",
+  "item_location_country": "GB",
+  "results_per_query": 25,
+  "request_timeout_seconds": 45,
+  "retry_attempts": 6,
+  "request_delay_seconds": 0.2,
+  "search_cache_minutes": 15,
+  "maximum_result_rows": 1500,
+  "maximum_selected_rows": 250,
+  "default_exclusions": [
+    "PSA",
+    "CGC",
+    "BGS",
+    "graded",
+    "slab",
+    "proxy",
+    "replica",
+    "custom",
+    "digital",
+    "online code",
+    "jumbo",
+    "oversized",
+    "metal card",
+    "sticker",
+    "Topps"
+  ],
+  "vintage_cutoff_year": 2010,
+  "modern_start_year": 2020
+}
