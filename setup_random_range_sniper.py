@@ -300,14 +300,15 @@ def _setup_result_or_queue_sheet(
         "Set", "Card Number", "Variant", "Listing Title", "Item ID",
         "Current Bid (£)", "Buy It Now (£)", "Postage (£)",
         "Bid Delivered (£)", "Buy Now Delivered (£)", "Market (£)",
-        "Bid / Market", "Buy Now / Market", "Target Delivered (£)",
-        "Maximum Bid (£)", "Bid Headroom (£)", "Buy Now Headroom (£)",
-        "Bid Decision", "Buy Now Decision", "Ends At",
-        "Minutes Remaining", "Bid Count", "Seller", "Feedback %",
-        "Feedback Count", "Condition", "Condition Flag",
+        "Bid / Market", "Buy Now / Market",
+        "Direct Listing", "Card Image", "Auction Search",
+        "Buy Now Search", "Sold Comparables",
+        "Target Delivered (£)", "Maximum Bid (£)", "Bid Headroom (£)",
+        "Buy Now Headroom (£)", "Bid Decision", "Buy Now Decision",
+        "Ends At", "Minutes Remaining", "Bid Count", "Seller",
+        "Feedback %", "Feedback Count", "Condition", "Condition Flag",
         "Condition Details", "Match Confidence", "Search Query",
-        "Direct Listing", "Auction Search", "Buy Now Search",
-        "Sold Comparables", "Card Image", "Status", "Notes",
+        "Status", "Notes",
     ]
     sheet.Range("A4:AT4").Value = (tuple(headers),)
     apply_header(sheet, 4, len(headers), fill)
@@ -317,21 +318,21 @@ def _setup_result_or_queue_sheet(
         "A": 7, "B": 11, "C": 23, "D": 9, "E": 22, "F": 18,
         "G": 20, "H": 40, "I": 17, "J": 24, "K": 12, "L": 22,
         "M": 50, "N": 20, "O": 13, "P": 14, "Q": 11, "R": 15,
-        "S": 17, "T": 12, "U": 13, "V": 15, "W": 17, "X": 15,
-        "Y": 15, "Z": 18, "AA": 13, "AB": 15, "AC": 18,
-        "AD": 16, "AE": 10, "AF": 18, "AG": 12, "AH": 14,
-        "AI": 28, "AJ": 14, "AK": 48, "AL": 16, "AM": 35,
-        "AN": 17, "AO": 19, "AP": 19, "AQ": 20, "AR": 18,
-        "AS": 12, "AT": 52,
+        "S": 17, "T": 12, "U": 13, "V": 15,
+        "W": 17, "X": 17, "Y": 19, "Z": 19, "AA": 20,
+        "AB": 17, "AC": 15, "AD": 15, "AE": 18,
+        "AF": 13, "AG": 15, "AH": 18, "AI": 16, "AJ": 10,
+        "AK": 18, "AL": 12, "AM": 14, "AN": 28, "AO": 14,
+        "AP": 48, "AQ": 16, "AR": 35, "AS": 12, "AT": 52,
     }
     for column, width in widths.items():
         sheet.Columns(column).ColumnWidth = width
 
     sheet.Range("O5:T1504").NumberFormat = '£0.00'
     sheet.Range("U5:V1504").NumberFormat = "0.0%"
-    sheet.Range("W5:Z1504").NumberFormat = '£0.00'
-    sheet.Range("AC5:AC1504").NumberFormat = "yyyy-mm-dd hh:mm"
-    sheet.Range("AG5:AG1504").NumberFormat = "0.0%"
+    sheet.Range("AB5:AE1504").NumberFormat = '£0.00'
+    sheet.Range("AH5:AH1504").NumberFormat = "yyyy-mm-dd hh:mm"
+    sheet.Range("AL5:AL1504").NumberFormat = "0.0%"
     sheet.Range("A5:AT1504").VerticalAlignment = XL_TOP
     sheet.Range("F5:AT1504").WrapText = True
 
@@ -344,7 +345,7 @@ def _setup_result_or_queue_sheet(
         sheet.Activate()
         workbook.Application.ActiveWindow.FreezePanes = False
         workbook.Application.ActiveWindow.SplitRow = 4
-        workbook.Application.ActiveWindow.SplitColumn = 7
+        workbook.Application.ActiveWindow.SplitColumn = 8
         workbook.Application.ActiveWindow.FreezePanes = True
     except Exception:
         pass

@@ -1,80 +1,114 @@
 from datetime import datetime, timezone
 
-from random_sniper.core import (
+from live_radar.core import (
     Candidate,
-    Settings,
-    build_queries,
-    ebay_active_search_url,
+    CandidateTitleMatcher,
+    RadarSettings,
+    card_number_match,
+    decision_for,
+    ebay_direct_search_url,
     ebay_sold_search_url,
-    eligible_candidates,
-    listing_match_score,
-    select_candidates,
+    normalize_card_number,
+    score_listing,
+    within_time_window,
 )
 
 
-def card(value, name="Pikachu", number="58", variant="Normal"):
+def card(
+    name="Pikachu",
+    number="58",
+    set_name="Base Set",
+    market=20.0,
+):
     return Candidate(
-        card_id=f"id-{value}",
+        card_id=f"{set_name}-{number}",
         name=name,
-        set_name="Base",
+        set_name=set_name,
         number=number,
-        variant=variant,
-        market_value=float(value),
+        variant="Normal",
+        market_value=market,
         source="test",
         source_date="2026-08-04",
         source_url="https://example",
-        supertype="Pokémon",
-        release_date="1999-01-09",
     )
 
 
-def test_query_and_links():
-    candidate = card(10)
-    queries = build_queries(candidate, "Balanced")
-    assert len(queries) == 2
-    assert "Pikachu" in queries[0]
-    assert "58" in queries[0]
-    assert "LH_Auction=1" in ebay_active_search_url(queries[0])
-    assert "LH_Sold=1" in ebay_sold_search_url(queries[0])
+def test_excel_number_cleanup():
+    assert normalize_card_number(54.0) == "54"
+    assert normalize_card_number("54.0") == "54"
+    assert normalize_card_number("RC10") == "RC10"
+    assert normalize_card_number("58/102") == "58/102"
 
 
-def test_matching_exact_card():
-    candidate = card(10)
-    score, reason = listing_match_score(
-        candidate,
-        "Pikachu Base Set 58/102 Pokemon Card Near Mint",
-        ["PSA", "proxy"],
+def test_title_match_requires_exact_number():
+    matcher = CandidateTitleMatcher([card()])
+    matched, score, reason = matcher.match(
+        "Pokemon Pikachu Base Set 58/102 Card",
+        [],
     )
+    assert matched is not None
+    assert score >= 0.72
     assert reason == ""
-    assert score >= 0.70
 
-
-def test_excluded_listing():
-    candidate = card(10)
-    score, reason = listing_match_score(
-        candidate,
-        "PSA 9 Pikachu Base Set 58/102",
-        ["PSA", "proxy"],
+    matched, _, _ = matcher.match(
+        "Pokemon Pikachu Base Set Card",
+        [],
     )
-    assert score == 0
-    assert "Excluded" in reason
+    assert matched is None
 
 
-def test_smart_random_range():
-    settings = Settings(
-        minimum_value=5,
-        maximum_value=50,
-        number_of_cards=5,
-        random_seed="test",
+def test_time_window():
+    settings = RadarSettings(
+        minimum_minutes_remaining=2,
+        maximum_hours_remaining=24,
     )
-    values = [card(value) for value in range(5, 51)]
-    eligible = eligible_candidates(
-        values,
-        settings,
-        datetime.now(timezone.utc),
-        2010,
-        2020,
+    assert within_time_window(2, settings)
+    assert within_time_window(1440, settings)
+    assert not within_time_window(1, settings)
+    assert not within_time_window(1441, settings)
+
+
+def test_green_decision():
+    settings = RadarSettings(
+        target_ratio=0.75,
+        amber_upper_ratio=0.90,
+        minimum_feedback=98,
+        minimum_feedback_count=25,
     )
-    selected = select_candidates(eligible, settings)
-    assert len(selected) == 5
-    assert all(5 <= item.market_value <= 50 for item in selected)
+    assert decision_for(
+        ratio=0.70,
+        match_score=0.90,
+        feedback_percent=99.5,
+        feedback_count=100,
+        settings=settings,
+        headroom=2.0,
+    ) == "GREEN"
+
+
+def test_links():
+    assert "LH_Auction=1" in ebay_direct_search_url(
+        "Pikachu Base 58"
+    )
+    assert "LH_Sold=1" in ebay_sold_search_url(
+        "Pikachu Base 58"
+    )
+
+
+def test_last_minute_score_has_urgency():
+    urgent = score_listing(
+        0.70,
+        0.90,
+        99.0,
+        3,
+        1,
+        0.75,
+    )
+    later = score_listing(
+        0.70,
+        0.90,
+        99.0,
+        600,
+        1,
+        0.75,
+    )
+    assert urgent > later

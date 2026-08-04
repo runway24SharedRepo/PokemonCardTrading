@@ -526,6 +526,11 @@ class ExcelAdapter:
             result.market_value,
             result.bid_ratio,
             result.buy_now_ratio,
+            "Open Listing",
+            "Open Card Image" if result.candidate.image_url else "",
+            "Open Auction Search",
+            "Open Buy Now Search",
+            "Open Sold Results",
             result.target_delivered,
             result.maximum_bid,
             result.bid_headroom,
@@ -543,11 +548,6 @@ class ExcelAdapter:
             result.condition_details,
             result.match_confidence,
             result.search_query,
-            "Open Listing",
-            "Open Auction Search",
-            "Open Buy Now Search",
-            "Open Sold Results",
-            "Open Card Image" if result.candidate.image_url else "",
             "NEW",
             result.notes,
         ]
@@ -560,7 +560,7 @@ class ExcelAdapter:
         sheet = self.sheet(sheet_name)
         sheet.Range("A5:AT1504").ClearContents()
         try:
-            sheet.Range("AN5:AR1504").Hyperlinks.Delete()
+            sheet.Range("W5:AA1504").Hyperlinks.Delete()
         except Exception:
             pass
 
@@ -592,47 +592,47 @@ class ExcelAdapter:
                 result.decision,
             )
             self._style_decision_cell(
-                sheet.Cells(row, 27),
+                sheet.Cells(row, 32),
                 result.bid_decision,
             )
             self._style_decision_cell(
-                sheet.Cells(row, 28),
+                sheet.Cells(row, 33),
                 result.buy_now_decision,
             )
             self._style_condition_cells(
                 sheet,
                 row,
-                condition_column=35,
-                flag_column=36,
+                condition_column=40,
+                flag_column=41,
                 flag=result.condition_flag,
             )
 
             sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 40),
+                Anchor=sheet.Cells(row, 23),
                 Address=result.item_url,
                 TextToDisplay="Open Listing",
             )
+            if result.candidate.image_url:
+                sheet.Hyperlinks.Add(
+                    Anchor=sheet.Cells(row, 24),
+                    Address=result.candidate.image_url,
+                    TextToDisplay="Open Card Image",
+                )
             sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 41),
+                Anchor=sheet.Cells(row, 25),
                 Address=result.auction_search_url,
                 TextToDisplay="Open Auction Search",
             )
             sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 42),
+                Anchor=sheet.Cells(row, 26),
                 Address=result.buy_now_search_url,
                 TextToDisplay="Open Buy Now Search",
             )
             sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 43),
+                Anchor=sheet.Cells(row, 27),
                 Address=result.sold_search_url,
                 TextToDisplay="Open Sold Results",
             )
-            if result.candidate.image_url:
-                sheet.Hyperlinks.Add(
-                    Anchor=sheet.Cells(row, 44),
-                    Address=result.candidate.image_url,
-                    TextToDisplay="Open Card Image",
-                )
 
     def write_results(self, results: list[ListingResult]) -> None:
         self._write_result_sheet("Random Snipe Results", results)

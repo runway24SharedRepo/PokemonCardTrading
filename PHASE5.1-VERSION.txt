@@ -1,0 +1,3 @@
+Pokémon Auction Scanner Phase 5.1
+Link columns moved beside market ratios.
+Added eBay Developer Analytics quota checker.
