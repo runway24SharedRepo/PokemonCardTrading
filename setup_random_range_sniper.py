@@ -110,6 +110,7 @@ def setup_control_sheet(workbook):
         ("Copy GREEN to Snipe Queue", "YES"),
         ("Maximum card attempts", 60),
         ("Random seed", ""),
+        ("Listing formats", "Auctions + Buy It Now"),
     ]
 
     for index, (label, default) in enumerate(controls, start=4):
@@ -117,10 +118,10 @@ def setup_control_sheet(workbook):
         if created or sheet.Cells(index, 2).Value in (None, ""):
             sheet.Cells(index, 2).Value = default
 
-    sheet.Range("A4:A20").Interior.Color = 0xE7D3B8
-    sheet.Range("A4:A20").Font.Bold = True
-    sheet.Range("B4:B20").Interior.Color = 0xCCF2FF
-    sheet.Range("B4:B20").Font.Color = 0x0000FF
+    sheet.Range("A4:A21").Interior.Color = 0xE7D3B8
+    sheet.Range("A4:A21").Font.Bold = True
+    sheet.Range("B4:B21").Interior.Color = 0xCCF2FF
+    sheet.Range("B4:B21").Font.Color = 0x0000FF
     sheet.Range("B4:B5").NumberFormat = '£0.00'
     sheet.Range("B14:B14").NumberFormat = "0%"
 
@@ -158,6 +159,9 @@ def setup_control_sheet(workbook):
         "Any", "£1", "£2", "£3", "£5", "£10",
     ])
     set_validation(sheet.Range("B18"), ["YES", "NO"])
+    set_validation(sheet.Range("B21"), [
+        "Auctions + Buy It Now", "Auctions only", "Buy It Now only",
+    ])
 
     kpi_labels = [
         "Last run",
@@ -166,7 +170,7 @@ def setup_control_sheet(workbook):
         "Eligible pool",
         "Cards attempted",
         "Cards with results",
-        "All matched live auctions",
+        "All matched live listings",
         "Random queue rows",
         "Queue GREEN opportunities",
         "Queue AMBER opportunities",
@@ -206,31 +210,31 @@ def setup_control_sheet(workbook):
         "Pick", "Selection Status", "Card ID", "Card Name", "Set",
         "Card Number", "Variant", "Rarity", "Market Value (£)",
         "Target Delivered (£)", "Market Source", "Price Date",
-        "Card Image", "Active eBay Search", "Sold Comparables",
-        "Queries Run", "Listings Found", "Best Delivered (£)",
-        "Best Discount", "Best Decision", "Last Selected", "Notes",
+        "Card Image", "Auction Search", "Buy Now Search",
+        "Sold Comparables", "Queries Run", "Listings Found",
+        "Best Delivered (£)", "Best Discount", "Best Decision",
+        "Best Action", "Last Selected", "Notes",
     ]
-    sheet.Range("A23:V23").Value = (tuple(headers),)
+    sheet.Range("A23:X23").Value = (tuple(headers),)
     apply_header(sheet, 23, len(headers), 0x5D3617)
-    format_all_borders(sheet, "A23:V273")
+    format_all_borders(sheet, "A23:X273")
 
     widths = {
         "A": 7, "B": 22, "C": 17, "D": 25, "E": 25, "F": 12,
         "G": 22, "H": 20, "I": 15, "J": 17, "K": 29, "L": 14,
-        "M": 18, "N": 21, "O": 20, "P": 12, "Q": 14, "R": 16,
-        "S": 14, "T": 14, "U": 18, "V": 45,
+        "M": 18, "N": 20, "O": 19, "P": 20, "Q": 12, "R": 14,
+        "S": 16, "T": 14, "U": 14, "V": 22, "W": 18, "X": 45,
     }
     for column, width in widths.items():
         sheet.Columns(column).ColumnWidth = width
 
-    sheet.Range("F24:F273").NumberFormat = "@"
     sheet.Range("I24:J273").NumberFormat = '£0.00'
-    sheet.Range("R24:R273").NumberFormat = '£0.00'
-    sheet.Range("S24:S273").NumberFormat = "0.0%"
+    sheet.Range("S24:S273").NumberFormat = '£0.00'
+    sheet.Range("T24:T273").NumberFormat = "0.0%"
     sheet.Range("L24:L273").NumberFormat = "yyyy-mm-dd"
-    sheet.Range("U24:U273").NumberFormat = "yyyy-mm-dd hh:mm"
-    sheet.Range("A24:V273").VerticalAlignment = XL_TOP
-    sheet.Range("B24:V273").WrapText = True
+    sheet.Range("W24:W273").NumberFormat = "yyyy-mm-dd hh:mm"
+    sheet.Range("A24:X273").VerticalAlignment = XL_TOP
+    sheet.Range("B24:X273").WrapText = True
 
     try:
         sheet.Activate()
@@ -242,148 +246,111 @@ def setup_control_sheet(workbook):
         pass
 
     try:
-        sheet.Range("A23:V273").AutoFilter()
+        sheet.Range("A23:X273").AutoFilter()
+    except Exception:
+        pass
+
+
+def _setup_result_or_queue_sheet(
+    workbook,
+    name: str,
+    title: str,
+    description: str,
+    fill: int,
+):
+    sheet, created = get_or_add_sheet(workbook, name)
+    if created:
+        sheet.Cells.Clear()
+    else:
+        sheet.Range("A1:AP1504").ClearContents()
+        sheet.Range("A1:AP1504").ClearFormats()
+
+    apply_title(sheet, 42, title, description, fill)
+
+    headers = [
+        "Rank", "Decision", "Recommended Action", "Score", "Listing Type",
+        "Selected Card", "Card ID", "Set", "Card Number", "Variant",
+        "Listing Title", "Item ID", "Current Bid (£)", "Buy It Now (£)",
+        "Postage (£)", "Bid Delivered (£)", "Buy Now Delivered (£)",
+        "Market (£)", "Bid / Market", "Buy Now / Market",
+        "Target Delivered (£)", "Maximum Bid (£)", "Bid Headroom (£)",
+        "Buy Now Headroom (£)", "Bid Decision", "Buy Now Decision",
+        "Ends At", "Minutes Remaining", "Bid Count", "Seller",
+        "Feedback %", "Feedback Count", "Condition", "Match Confidence",
+        "Search Query", "Direct Listing", "Auction Search", "Buy Now Search",
+        "Sold Comparables", "Card Image", "Status", "Notes",
+    ]
+    sheet.Range("A4:AP4").Value = (tuple(headers),)
+    apply_header(sheet, 4, len(headers), fill)
+    format_all_borders(sheet, "A4:AP1504")
+
+    widths = {
+        "A": 7, "B": 11, "C": 22, "D": 9, "E": 22, "F": 40,
+        "G": 17, "H": 24, "I": 12, "J": 22, "K": 50, "L": 20,
+        "M": 13, "N": 14, "O": 11, "P": 15, "Q": 17, "R": 12,
+        "S": 13, "T": 15, "U": 17, "V": 15, "W": 15, "X": 18,
+        "Y": 13, "Z": 15, "AA": 18, "AB": 16, "AC": 10, "AD": 18,
+        "AE": 12, "AF": 14, "AG": 17, "AH": 16, "AI": 35,
+        "AJ": 17, "AK": 19, "AL": 19, "AM": 20, "AN": 18,
+        "AO": 12, "AP": 48,
+    }
+    for column, width in widths.items():
+        sheet.Columns(column).ColumnWidth = width
+
+    sheet.Range("M5:R1504").NumberFormat = '£0.00'
+    sheet.Range("S5:T1504").NumberFormat = "0.0%"
+    sheet.Range("U5:X1504").NumberFormat = '£0.00'
+    sheet.Range("AA5:AA1504").NumberFormat = "yyyy-mm-dd hh:mm"
+    sheet.Range("AE5:AE1504").NumberFormat = "0.0%"
+    sheet.Range("A5:AP1504").VerticalAlignment = XL_TOP
+    sheet.Range("F5:AP1504").WrapText = True
+
+    set_validation(sheet.Range("AO5:AO1504"), [
+        "NEW", "CHECKED", "WATCH", "BID", "BUY NOW", "REJECTED", "ENDED",
+    ])
+
+    try:
+        sheet.Activate()
+        workbook.Application.ActiveWindow.FreezePanes = False
+        workbook.Application.ActiveWindow.SplitRow = 4
+        workbook.Application.ActiveWindow.SplitColumn = 5
+        workbook.Application.ActiveWindow.FreezePanes = True
+    except Exception:
+        pass
+
+    try:
+        if sheet.AutoFilterMode:
+            sheet.AutoFilterMode = False
+        sheet.Range("A4:AP1504").AutoFilter()
     except Exception:
         pass
 
 
 def setup_results_sheet(workbook):
-    sheet, created = get_or_add_sheet(workbook, "Random Snipe Results")
-    if created:
-        sheet.Cells.Clear()
-
-    apply_title(
-        sheet,
-        33,
-        "Random Snipe Results — Live UK eBay Auctions",
+    _setup_result_or_queue_sheet(
+        workbook,
+        "Random Snipe Results",
+        "Random Snipe Results — Auctions and Buy It Now Listings",
         (
-            "All reliably matched live auctions appear here, including "
-            "listings outside the configured ending window. Immediate "
-            "ending-window findings are copied into Random Snipe Queue. "
-            "All links are clickable."
+            "Every reliably matched live listing appears here. Auction and "
+            "Buy It Now prices are evaluated independently, with separate "
+            "delivered costs, ratios, decisions and a recommended action."
         ),
         0x006100,
     )
 
-    headers = [
-        "Rank", "Decision", "Score", "Selected Card", "Card ID", "Set",
-        "Card Number", "Variant", "Listing Title", "Item ID",
-        "Current Bid (£)", "Postage (£)", "Delivered (£)", "Market (£)",
-        "Cost / Market", "Target Delivered (£)", "Maximum Bid (£)",
-        "Bid Headroom (£)", "Ends At", "Minutes Remaining", "Bid Count",
-        "Seller", "Feedback %", "Feedback Count", "Condition",
-        "Match Confidence", "Search Query", "Direct Listing",
-        "Active Search", "Sold Comparables", "Card Image", "Status", "Notes",
-    ]
-    sheet.Range("A4:AG4").Value = (tuple(headers),)
-    apply_header(sheet, 4, len(headers), 0x006100)
-    format_all_borders(sheet, "A4:AG1504")
-
-    widths = {
-        "A": 7, "B": 11, "C": 9, "D": 40, "E": 17, "F": 24,
-        "G": 12, "H": 22, "I": 50, "J": 20, "K": 13, "L": 11,
-        "M": 13, "N": 12, "O": 13, "P": 17, "Q": 15, "R": 15,
-        "S": 18, "T": 16, "U": 10, "V": 18, "W": 12, "X": 14,
-        "Y": 17, "Z": 16, "AA": 35, "AB": 17, "AC": 19,
-        "AD": 20, "AE": 18, "AF": 12, "AG": 45,
-    }
-    for column, width in widths.items():
-        sheet.Columns(column).ColumnWidth = width
-
-    sheet.Range("K5:N1504").NumberFormat = '£0.00'
-    sheet.Range("O5:O1504").NumberFormat = "0.0%"
-    sheet.Range("P5:R1504").NumberFormat = '£0.00'
-    sheet.Range("S5:S1504").NumberFormat = "yyyy-mm-dd hh:mm"
-    sheet.Range("W5:W1504").NumberFormat = "0.0%"
-    sheet.Range("A5:AG1504").VerticalAlignment = XL_TOP
-    sheet.Range("D5:AG1504").WrapText = True
-
-    set_validation(sheet.Range("AF5:AF1504"), [
-        "NEW", "CHECKED", "WATCH", "BID", "REJECTED", "ENDED",
-    ])
-
-    try:
-        sheet.Activate()
-        workbook.Application.ActiveWindow.FreezePanes = False
-        workbook.Application.ActiveWindow.SplitRow = 4
-        workbook.Application.ActiveWindow.SplitColumn = 3
-        workbook.Application.ActiveWindow.FreezePanes = True
-    except Exception:
-        pass
-
-    try:
-        sheet.Range("A4:AG1504").AutoFilter()
-    except Exception:
-        pass
-
-
 
 def setup_random_queue_sheet(workbook):
-    sheet, created = get_or_add_sheet(workbook, "Random Snipe Queue")
-    if created:
-        sheet.Cells.Clear()
-
-    apply_title(
-        sheet,
-        28,
-        "Random Snipe Queue — Auctions Inside Your Ending Window",
+    _setup_result_or_queue_sheet(
+        workbook,
+        "Random Snipe Queue",
+        "Random Snipe Queue — Immediate Bid and Buy It Now Opportunities",
         (
-            "This is the immediate-action subset of Random Snipe Results. "
-            "It contains matched UK auctions ending within the configured "
-            "window, with clickable listing, active-search, sold and image links."
+            "Contains auctions inside the configured ending window plus "
+            "GREEN/AMBER Buy It Now opportunities that can be acted on now."
         ),
         0x9C6500,
     )
-
-    headers = [
-        "Priority", "Decision", "Score", "Selected Card", "Card ID",
-        "Listing Title", "Current Bid (£)", "Postage (£)", "Delivered (£)",
-        "Market (£)", "Cost / Market", "Target Delivered (£)",
-        "Maximum Bid (£)", "Bid Headroom (£)", "Ends At",
-        "Minutes Remaining", "Bid Count", "Seller", "Feedback %",
-        "Condition", "Match Confidence", "Search Query", "Direct Listing",
-        "Active Search", "Sold Comparables", "Card Image", "Status", "Notes",
-    ]
-    sheet.Range("A4:AB4").Value = (tuple(headers),)
-    apply_header(sheet, 4, len(headers), 0x9C6500)
-    format_all_borders(sheet, "A4:AB1504")
-
-    widths = {
-        "A": 9, "B": 11, "C": 9, "D": 40, "E": 17, "F": 50,
-        "G": 13, "H": 11, "I": 13, "J": 12, "K": 13, "L": 17,
-        "M": 15, "N": 15, "O": 18, "P": 16, "Q": 10, "R": 18,
-        "S": 12, "T": 17, "U": 16, "V": 35, "W": 17, "X": 19,
-        "Y": 20, "Z": 18, "AA": 12, "AB": 48,
-    }
-    for column, width in widths.items():
-        sheet.Columns(column).ColumnWidth = width
-
-    sheet.Range("G5:J1504").NumberFormat = '£0.00'
-    sheet.Range("K5:K1504").NumberFormat = "0.0%"
-    sheet.Range("L5:N1504").NumberFormat = '£0.00'
-    sheet.Range("O5:O1504").NumberFormat = "yyyy-mm-dd hh:mm"
-    sheet.Range("S5:S1504").NumberFormat = "0.0%"
-    sheet.Range("A5:AB1504").VerticalAlignment = XL_TOP
-    sheet.Range("D5:AB1504").WrapText = True
-
-    set_validation(sheet.Range("AA5:AA1504"), [
-        "NEW", "CHECKED", "WATCH", "BID", "REJECTED", "ENDED",
-    ])
-
-    try:
-        sheet.Activate()
-        workbook.Application.ActiveWindow.FreezePanes = False
-        workbook.Application.ActiveWindow.SplitRow = 4
-        workbook.Application.ActiveWindow.SplitColumn = 3
-        workbook.Application.ActiveWindow.FreezePanes = True
-    except Exception:
-        pass
-
-    try:
-        sheet.Range("A4:AB1504").AutoFilter()
-    except Exception:
-        pass
-
 
 def setup_history_sheet(workbook):
     sheet, created = get_or_add_sheet(workbook, "Random Snipe History")

@@ -29,6 +29,7 @@ if "%EXITCODE%"=="0" (
     echo   - Random Snipe Results
     echo   - Random Snipe Queue
     echo   - Random Snipe History
+    echo Review separate BID and BUY NOW decisions
     echo   - Snipe Queue
 ) else (
     echo FAILED: Review random-range-sniper.log.

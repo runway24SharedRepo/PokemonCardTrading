@@ -180,13 +180,23 @@ class EbayBrowseClient:
             "token_length": len(token),
         }
 
-    def search_auctions(
+    def search_listings(
         self,
         query: str,
+        listing_formats: str = "Auctions + Buy It Now",
     ) -> list[dict[str, Any]]:
+        mode = str(listing_formats or "Auctions + Buy It Now").strip()
+        if mode == "Auctions only":
+            buying_filter = "buyingOptions:{AUCTION}"
+        elif mode == "Buy It Now only":
+            buying_filter = "buyingOptions:{FIXED_PRICE}"
+        else:
+            buying_filter = "buyingOptions:{AUCTION|FIXED_PRICE}"
+
         cache_key = (
-            f"{self.marketplace}|{self.delivery_country}|"
-            f"{self.location_country}|{self.results_per_query}|{query}"
+            f"phase4.2|{self.marketplace}|{self.delivery_country}|"
+            f"{self.location_country}|{self.results_per_query}|"
+            f"{buying_filter}|{query}"
         )
         cached = self.cache.get(cache_key)
         if cached is not None:
@@ -204,7 +214,7 @@ class EbayBrowseClient:
                 "q": query,
                 "filter": ",".join(
                     [
-                        "buyingOptions:{AUCTION}",
+                        buying_filter,
                         f"deliveryCountry:{self.delivery_country}",
                         f"itemLocationCountry:{self.location_country}",
                     ]
@@ -217,3 +227,11 @@ class EbayBrowseClient:
         items = response.json().get("itemSummaries", [])
         self.cache.put(cache_key, items)
         return items
+
+    def search_auctions(
+        self,
+        query: str,
+    ) -> list[dict[str, Any]]:
+        """Compatibility wrapper retained for older integrations."""
+        return self.search_listings(query, "Auctions only")
+

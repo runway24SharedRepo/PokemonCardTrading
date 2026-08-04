@@ -65,12 +65,54 @@ class ExcelAdapter:
             return [value]
         return [(value,)]
 
+    @staticmethod
+    def _excel_rgb(red: int, green: int, blue: int) -> int:
+        return int(red) + (int(green) << 8) + (int(blue) << 16)
+
+    def _style_decision_cell(self, cell, decision: str) -> None:
+        decision = str(decision or "").strip().upper()
+        palette = {
+            "GREEN": ((198, 239, 206), (0, 97, 0)),
+            "AMBER": ((255, 235, 156), (156, 101, 0)),
+            "RED": ((255, 199, 206), (156, 0, 6)),
+            "N/A": ((217, 217, 217), (89, 89, 89)),
+        }
+        fill, font = palette.get(decision, ((255, 255, 255), (0, 0, 0)))
+        cell.Interior.Color = self._excel_rgb(*fill)
+        cell.Font.Color = self._excel_rgb(*font)
+        cell.Font.Bold = True
+        cell.HorizontalAlignment = -4108
+
+    def _style_result_decisions(
+        self,
+        sheet,
+        start_row: int,
+        results: list[ListingResult],
+        overall_column: int,
+        bid_column: int,
+        buy_now_column: int,
+    ) -> None:
+        for offset, result in enumerate(results):
+            row = start_row + offset
+            self._style_decision_cell(
+                sheet.Cells(row, overall_column),
+                result.decision,
+            )
+            self._style_decision_cell(
+                sheet.Cells(row, bid_column),
+                result.bid_decision,
+            )
+            self._style_decision_cell(
+                sheet.Cells(row, buy_now_column),
+                result.buy_now_decision,
+            )
+
     def read_settings(self) -> Settings:
         sheet = self.sheet("Random Range Sniper")
         values = {
             str(sheet.Cells(row, 1).Value or "").strip():
             sheet.Cells(row, 2).Value
-            for row in range(4, 21)
+            for row in range(4, 22)
         }
 
         return Settings(
@@ -116,6 +158,9 @@ class ExcelAdapter:
                 values.get("Maximum card attempts") or 60
             ),
             random_seed=str(values.get("Random seed") or "").strip(),
+            listing_formats=str(
+                values.get("Listing formats") or "Auctions + Buy It Now"
+            ),
         )
 
     def read_full_database(self) -> dict[tuple[str, str, str], dict[str, Any]]:
@@ -313,7 +358,11 @@ class ExcelAdapter:
         attempts: list[dict[str, Any]],
     ) -> None:
         sheet = self.sheet("Random Range Sniper")
-        self.clear_selected_rows()
+        sheet.Range("A24:W273").ClearContents()
+        try:
+            sheet.Range("M24:P273").Hyperlinks.Delete()
+        except Exception:
+            pass
 
         rows = []
         for index, attempt in enumerate(attempts, start=1):
@@ -327,6 +376,7 @@ class ExcelAdapter:
                 else None
             )
             best_decision = best.decision if best else ""
+            best_action = best.recommended_action if best else ""
             rows.append(
                 [
                     index,
@@ -342,13 +392,15 @@ class ExcelAdapter:
                     candidate.source,
                     candidate.source_date,
                     "Open Card Image" if candidate.image_url else "",
-                    "Open Active Search",
+                    "Open Auction Search",
+                    "Open Buy Now Search",
                     "Open Sold Results",
                     int(attempt.get("queries_run", 0)),
                     result_count,
                     best_delivered,
                     best_discount,
                     best_decision,
+                    best_action,
                     datetime.now(),
                     attempt.get("notes", ""),
                 ]
@@ -358,7 +410,7 @@ class ExcelAdapter:
             bottom = 23 + len(rows)
             sheet.Range(
                 sheet.Cells(24, 1),
-                sheet.Cells(bottom, 22),
+                sheet.Cells(bottom, 24),
             ).Value = tuple(tuple(row) for row in rows)
 
             for offset, attempt in enumerate(attempts):
@@ -373,190 +425,148 @@ class ExcelAdapter:
                 sheet.Hyperlinks.Add(
                     Anchor=sheet.Cells(row, 14),
                     Address=attempt["active_search_url"],
-                    TextToDisplay="Open Active Search",
+                    TextToDisplay="Open Auction Search",
                 )
                 sheet.Hyperlinks.Add(
                     Anchor=sheet.Cells(row, 15),
+                    Address=attempt["buy_now_search_url"],
+                    TextToDisplay="Open Buy Now Search",
+                )
+                sheet.Hyperlinks.Add(
+                    Anchor=sheet.Cells(row, 16),
                     Address=attempt["sold_search_url"],
                     TextToDisplay="Open Sold Results",
                 )
+                if best := attempt.get("best_result"):
+                    self._style_decision_cell(
+                        sheet.Cells(row, 21),
+                        best.decision,
+                    )
 
-    def write_results(self, results: list[ListingResult]) -> None:
-        sheet = self.sheet("Random Snipe Results")
-        sheet.Range("A5:AG1504").ClearContents()
+    @staticmethod
+    def _result_row(order: int, result: ListingResult) -> list[Any]:
+        card_label = (
+            f"{result.candidate.name} | "
+            f"{result.candidate.set_name} | "
+            f"{result.candidate.number} | "
+            f"{result.candidate.variant}"
+        )
+        return [
+            order,
+            result.decision,
+            result.recommended_action,
+            result.score,
+            result.listing_type,
+            card_label,
+            result.candidate.card_id,
+            result.candidate.set_name,
+            result.candidate.number,
+            result.candidate.variant,
+            result.title,
+            result.item_id,
+            result.current_bid,
+            result.buy_now_price,
+            result.postage,
+            result.bid_delivered,
+            result.buy_now_delivered,
+            result.market_value,
+            result.bid_ratio,
+            result.buy_now_ratio,
+            result.target_delivered,
+            result.maximum_bid,
+            result.bid_headroom,
+            result.buy_now_headroom,
+            result.bid_decision,
+            result.buy_now_decision,
+            result.end_time.replace(tzinfo=None),
+            result.minutes_remaining,
+            result.bid_count,
+            result.seller,
+            result.feedback_percent / 100,
+            result.feedback_count,
+            result.condition,
+            result.match_confidence,
+            result.search_query,
+            "Open Listing",
+            "Open Auction Search",
+            "Open Buy Now Search",
+            "Open Sold Results",
+            "Open Card Image" if result.candidate.image_url else "",
+            "NEW",
+            result.notes,
+        ]
+
+    def _write_result_sheet(
+        self,
+        sheet_name: str,
+        results: list[ListingResult],
+    ) -> None:
+        sheet = self.sheet(sheet_name)
+        sheet.Range("A5:AP1504").ClearContents()
         try:
-            sheet.Range("AB5:AE1504").Hyperlinks.Delete()
+            sheet.Range("AJ5:AN1504").Hyperlinks.Delete()
         except Exception:
             pass
 
-        rows = []
-        for rank, result in enumerate(results, start=1):
-            card_label = (
-                f"{result.candidate.name} | "
-                f"{result.candidate.set_name} | "
-                f"{result.candidate.number} | "
-                f"{result.candidate.variant}"
+        rows = [
+            self._result_row(order, result)
+            for order, result in enumerate(results, start=1)
+        ]
+        if not rows:
+            return
+
+        bottom = 4 + len(rows)
+        sheet.Range(
+            sheet.Cells(5, 1),
+            sheet.Cells(bottom, 42),
+        ).Value = tuple(tuple(row) for row in rows)
+
+        self._style_result_decisions(
+            sheet,
+            5,
+            results,
+            overall_column=2,
+            bid_column=25,
+            buy_now_column=26,
+        )
+
+        for offset, result in enumerate(results):
+            row = 5 + offset
+            sheet.Hyperlinks.Add(
+                Anchor=sheet.Cells(row, 36),
+                Address=result.item_url,
+                TextToDisplay="Open Listing",
             )
-            rows.append(
-                [
-                    rank,
-                    result.decision,
-                    result.score,
-                    card_label,
-                    result.candidate.card_id,
-                    result.candidate.set_name,
-                    result.candidate.number,
-                    result.candidate.variant,
-                    result.title,
-                    result.item_id,
-                    result.current_bid,
-                    result.postage,
-                    result.delivered,
-                    result.market_value,
-                    result.ratio,
-                    result.target_delivered,
-                    result.maximum_bid,
-                    result.headroom,
-                    result.end_time.replace(tzinfo=None),
-                    result.minutes_remaining,
-                    result.bid_count,
-                    result.seller,
-                    result.feedback_percent / 100,
-                    result.feedback_count,
-                    result.condition,
-                    result.match_confidence,
-                    result.search_query,
-                    "Open Listing",
-                    "Open Active Search",
-                    "Open Sold Results",
-                    (
-                        "Open Card Image"
-                        if result.candidate.image_url
-                        else ""
-                    ),
-                    "NEW",
-                    result.notes,
-                ]
+            sheet.Hyperlinks.Add(
+                Anchor=sheet.Cells(row, 37),
+                Address=result.auction_search_url,
+                TextToDisplay="Open Auction Search",
             )
-
-        if rows:
-            bottom = 4 + len(rows)
-            sheet.Range(
-                sheet.Cells(5, 1),
-                sheet.Cells(bottom, 33),
-            ).Value = tuple(tuple(row) for row in rows)
-
-            for offset, result in enumerate(results):
-                row = 5 + offset
+            sheet.Hyperlinks.Add(
+                Anchor=sheet.Cells(row, 38),
+                Address=result.buy_now_search_url,
+                TextToDisplay="Open Buy Now Search",
+            )
+            sheet.Hyperlinks.Add(
+                Anchor=sheet.Cells(row, 39),
+                Address=result.sold_search_url,
+                TextToDisplay="Open Sold Results",
+            )
+            if result.candidate.image_url:
                 sheet.Hyperlinks.Add(
-                    Anchor=sheet.Cells(row, 28),
-                    Address=result.item_url,
-                    TextToDisplay="Open Listing",
+                    Anchor=sheet.Cells(row, 40),
+                    Address=result.candidate.image_url,
+                    TextToDisplay="Open Card Image",
                 )
-                sheet.Hyperlinks.Add(
-                    Anchor=sheet.Cells(row, 29),
-                    Address=result.active_search_url,
-                    TextToDisplay="Open Active Search",
-                )
-                sheet.Hyperlinks.Add(
-                    Anchor=sheet.Cells(row, 30),
-                    Address=result.sold_search_url,
-                    TextToDisplay="Open Sold Results",
-                )
-                if result.candidate.image_url:
-                    sheet.Hyperlinks.Add(
-                        Anchor=sheet.Cells(row, 31),
-                        Address=result.candidate.image_url,
-                        TextToDisplay="Open Card Image",
-                    )
 
+    def write_results(self, results: list[ListingResult]) -> None:
+        self._write_result_sheet("Random Snipe Results", results)
 
     def write_random_snipe_queue(
         self,
         results: list[ListingResult],
     ) -> None:
-        sheet = self.sheet("Random Snipe Queue")
-        sheet.Range("A5:AB1504").ClearContents()
-        try:
-            sheet.Range("W5:Z1504").Hyperlinks.Delete()
-        except Exception:
-            pass
-
-        rows = []
-        for priority, result in enumerate(results, start=1):
-            card_label = (
-                f"{result.candidate.name} | "
-                f"{result.candidate.set_name} | "
-                f"{result.candidate.number} | "
-                f"{result.candidate.variant}"
-            )
-            rows.append(
-                [
-                    priority,
-                    result.decision,
-                    result.score,
-                    card_label,
-                    result.candidate.card_id,
-                    result.title,
-                    result.current_bid,
-                    result.postage,
-                    result.delivered,
-                    result.market_value,
-                    result.ratio,
-                    result.target_delivered,
-                    result.maximum_bid,
-                    result.headroom,
-                    result.end_time.replace(tzinfo=None),
-                    result.minutes_remaining,
-                    result.bid_count,
-                    result.seller,
-                    result.feedback_percent / 100,
-                    result.condition,
-                    result.match_confidence,
-                    result.search_query,
-                    "Open Listing",
-                    "Open Active Search",
-                    "Open Sold Results",
-                    (
-                        "Open Card Image"
-                        if result.candidate.image_url
-                        else ""
-                    ),
-                    "NEW",
-                    result.notes,
-                ]
-            )
-
-        if rows:
-            bottom = 4 + len(rows)
-            sheet.Range(
-                sheet.Cells(5, 1),
-                sheet.Cells(bottom, 28),
-            ).Value = tuple(tuple(row) for row in rows)
-
-            for offset, result in enumerate(results):
-                row = 5 + offset
-                sheet.Hyperlinks.Add(
-                    Anchor=sheet.Cells(row, 23),
-                    Address=result.item_url,
-                    TextToDisplay="Open Listing",
-                )
-                sheet.Hyperlinks.Add(
-                    Anchor=sheet.Cells(row, 24),
-                    Address=result.active_search_url,
-                    TextToDisplay="Open Active Search",
-                )
-                sheet.Hyperlinks.Add(
-                    Anchor=sheet.Cells(row, 25),
-                    Address=result.sold_search_url,
-                    TextToDisplay="Open Sold Results",
-                )
-                if result.candidate.image_url:
-                    sheet.Hyperlinks.Add(
-                        Anchor=sheet.Cells(row, 26),
-                        Address=result.candidate.image_url,
-                        TextToDisplay="Open Card Image",
-                    )
+        self._write_result_sheet("Random Snipe Queue", results)
 
     def append_history(
         self,
@@ -664,9 +674,12 @@ class ExcelAdapter:
         self,
         results: list[ListingResult],
     ) -> int:
+        # The legacy Snipe Queue is auction-shaped, so copy only GREEN auction
+        # scenarios. Buy It Now opportunities remain in Random Snipe Queue.
         green = [
             result for result in results
-            if result.decision == "GREEN"
+            if result.bid_decision == "GREEN"
+            and result.current_bid is not None
         ]
         if not green:
             return 0
@@ -689,19 +702,19 @@ class ExcelAdapter:
             rows.append(
                 [
                     priority,
-                    result.decision,
+                    result.bid_decision,
                     result.score,
                     card_label,
                     result.title,
                     result.item_id,
                     result.current_bid,
                     result.postage,
-                    result.delivered,
+                    result.bid_delivered,
                     result.market_value,
-                    result.ratio,
+                    result.bid_ratio,
                     result.target_delivered,
                     result.maximum_bid,
-                    result.headroom,
+                    result.bid_headroom,
                     result.end_time.replace(tzinfo=None),
                     result.minutes_remaining,
                     result.bid_count,
@@ -728,6 +741,7 @@ class ExcelAdapter:
 
         for offset, result in enumerate(green[:500]):
             row = 5 + offset
+            self._style_decision_cell(sheet.Cells(row, 2), "GREEN")
             sheet.Hyperlinks.Add(
                 Anchor=sheet.Cells(row, 24),
                 Address=result.item_url,
@@ -740,3 +754,4 @@ class ExcelAdapter:
                     TextToDisplay="Open Card Image",
                 )
         return len(rows)
+

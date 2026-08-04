@@ -64,6 +64,7 @@ class Settings:
     copy_green_to_main_queue: bool = True
     maximum_attempts: int = 60
     random_seed: str = ""
+    listing_formats: str = "Auctions + Buy It Now"
 
 
 @dataclass
@@ -73,17 +74,27 @@ class ListingResult:
     item_id: str
     item_url: str
     image_url: str
-    current_bid: float
+    buying_options: tuple[str, ...]
+    listing_type: str
+    current_bid: float | None
+    buy_now_price: float | None
     postage: float
-    delivered: float
+    bid_delivered: float | None
+    buy_now_delivered: float | None
     market_value: float
-    ratio: float
+    bid_ratio: float | None
+    buy_now_ratio: float | None
     target_delivered: float
-    maximum_bid: float
-    headroom: float
+    maximum_bid: float | None
+    bid_headroom: float | None
+    buy_now_headroom: float | None
+    bid_decision: str
+    buy_now_decision: str
+    recommended_action: str
     end_time: datetime
     minutes_remaining: int
     within_sniping_window: bool
+    queue_eligible: bool
     bid_count: int
     seller: str
     feedback_percent: float
@@ -92,11 +103,34 @@ class ListingResult:
     match_score: float
     match_confidence: str
     search_query: str
-    active_search_url: str
+    auction_search_url: str
+    buy_now_search_url: str
     sold_search_url: str
     score: float
     decision: str
     notes: str = ""
+
+    @property
+    def delivered(self) -> float | None:
+        values = [
+            value for value in (self.bid_delivered, self.buy_now_delivered)
+            if value is not None
+        ]
+        return min(values) if values else None
+
+    @property
+    def ratio(self) -> float:
+        values = [
+            value for value in (self.bid_ratio, self.buy_now_ratio)
+            if value is not None
+        ]
+        return min(values) if values else 999.0
+
+    @property
+    def headroom(self) -> float | None:
+        if self.recommended_action in {"BUY NOW", "BID OR BUY NOW"}:
+            return self.buy_now_headroom
+        return self.bid_headroom
 
 
 def normalize_card_number(value: Any) -> str:
@@ -193,12 +227,25 @@ def build_queries(candidate: Candidate, search_depth: str) -> list[str]:
     return queries
 
 
-def ebay_active_search_url(query: str) -> str:
+def ebay_auction_search_url(query: str) -> str:
     return (
         "https://www.ebay.co.uk/sch/i.html?"
         f"_nkw={quote_plus(query)}"
         "&_sacat=0&LH_Auction=1&LH_PrefLoc=1&_sop=1"
     )
+
+
+def ebay_buy_now_search_url(query: str) -> str:
+    return (
+        "https://www.ebay.co.uk/sch/i.html?"
+        f"_nkw={quote_plus(query)}"
+        "&_sacat=0&LH_BIN=1&LH_PrefLoc=1&_sop=15"
+    )
+
+
+def ebay_active_search_url(query: str) -> str:
+    """Backward-compatible alias for the auction search URL."""
+    return ebay_auction_search_url(query)
 
 
 def ebay_sold_search_url(query: str) -> str:
@@ -623,3 +670,33 @@ def decision_for(
         return "AMBER"
 
     return "RED"
+
+
+_DECISION_RANK = {"N/A": -1, "RED": 0, "AMBER": 1, "GREEN": 2}
+
+
+def overall_decision(bid_decision: str, buy_now_decision: str) -> str:
+    return max(
+        (bid_decision, buy_now_decision),
+        key=lambda value: _DECISION_RANK.get(value, -1),
+    )
+
+
+def recommended_action(
+    bid_decision: str,
+    buy_now_decision: str,
+    within_sniping_window: bool,
+) -> str:
+    if bid_decision == "GREEN" and buy_now_decision == "GREEN":
+        return "BID OR BUY NOW" if within_sniping_window else "BUY NOW / WATCH BID"
+    if buy_now_decision == "GREEN":
+        return "BUY NOW"
+    if bid_decision == "GREEN":
+        return "BID / SNIPE" if within_sniping_window else "WATCH AUCTION"
+    if buy_now_decision == "AMBER" and bid_decision == "AMBER":
+        return "REVIEW BOTH"
+    if buy_now_decision == "AMBER":
+        return "REVIEW BUY NOW"
+    if bid_decision == "AMBER":
+        return "WATCH AUCTION"
+    return "SKIP"

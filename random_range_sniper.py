@@ -19,10 +19,14 @@ from random_sniper.core import (
     confidence_label,
     decision_for,
     ebay_active_search_url,
+    ebay_auction_search_url,
+    ebay_buy_now_search_url,
     ebay_sold_search_url,
     eligible_candidates,
     listing_match_score,
     score_listing,
+    overall_decision,
+    recommended_action,
     select_candidates,
 )
 from random_sniper.ebay_client import EbayBrowseClient
@@ -135,9 +139,64 @@ def evaluate_item(
     if match_score < 0.52:
         return None
 
-    current_bid = parse_money(item.get("currentBid") or item.get("price"))
-    if current_bid <= 0:
+    options = tuple(
+        sorted(
+            {
+                str(value).strip().upper()
+                for value in (item.get("buyingOptions") or [])
+                if str(value).strip()
+            }
+        )
+    )
+    option_set = set(options)
+
+    # eBay's documented auction field is currentBidPrice. The generic price
+    # field is used for a fixed-price/Buy It Now option.
+    current_bid = (
+        parse_money(item.get("currentBidPrice"))
+        if "AUCTION" in option_set
+        else 0.0
+    )
+    buy_now_price = (
+        parse_money(item.get("price"))
+        if "FIXED_PRICE" in option_set
+        else 0.0
+    )
+
+    notes_parts: list[str] = []
+    if rejection:
+        notes_parts.append(rejection)
+
+    # Defensive fallback for auction-only summaries where the API returns the
+    # opening/current auction price in the generic price field.
+    if "AUCTION" in option_set and current_bid <= 0 and "FIXED_PRICE" not in option_set:
+        current_bid = parse_money(item.get("price"))
+        if current_bid > 0:
+            notes_parts.append("Auction price read from eBay's generic price field")
+
+    # Infer format only if buyingOptions was unexpectedly omitted.
+    if not option_set:
+        if parse_money(item.get("currentBidPrice")) > 0:
+            option_set.add("AUCTION")
+            current_bid = parse_money(item.get("currentBidPrice"))
+        elif parse_money(item.get("price")) > 0:
+            option_set.add("FIXED_PRICE")
+            buy_now_price = parse_money(item.get("price"))
+        options = tuple(sorted(option_set))
+
+    if current_bid <= 0 and buy_now_price <= 0:
         return None
+
+    if option_set == {"AUCTION", "FIXED_PRICE"}:
+        listing_type = "AUCTION + BUY IT NOW"
+    elif "AUCTION" in option_set:
+        listing_type = "AUCTION"
+    elif "FIXED_PRICE" in option_set:
+        listing_type = "BUY IT NOW"
+    elif "BEST_OFFER" in option_set:
+        listing_type = "BEST OFFER"
+    else:
+        listing_type = "OTHER"
 
     postage = shipping_cost(item)
     if (
@@ -146,12 +205,44 @@ def evaluate_item(
     ):
         return None
 
-    delivered = current_bid + postage
     market = candidate.market_value
-    ratio = delivered / market if market else 999
     target_delivered = market * settings.target_ratio
-    maximum_bid = max(0.0, target_delivered - postage)
-    headroom = maximum_bid - current_bid
+
+    bid_delivered = (
+        current_bid + postage
+        if current_bid > 0
+        else None
+    )
+    buy_now_delivered = (
+        buy_now_price + postage
+        if buy_now_price > 0
+        else None
+    )
+    bid_ratio = (
+        bid_delivered / market
+        if bid_delivered is not None and market
+        else None
+    )
+    buy_now_ratio = (
+        buy_now_delivered / market
+        if buy_now_delivered is not None and market
+        else None
+    )
+    maximum_bid = (
+        max(0.0, target_delivered - postage)
+        if current_bid > 0
+        else None
+    )
+    bid_headroom = (
+        maximum_bid - current_bid
+        if maximum_bid is not None
+        else None
+    )
+    buy_now_headroom = (
+        target_delivered - buy_now_delivered
+        if buy_now_delivered is not None
+        else None
+    )
 
     end_time = parse_end_time(item.get("itemEndDate"))
     minutes_remaining = max(
@@ -159,7 +250,8 @@ def evaluate_item(
         int((end_time - datetime.now(timezone.utc)).total_seconds() / 60),
     )
     within_sniping_window = (
-        minutes_remaining <= settings.ending_within_hours * 60
+        "AUCTION" in option_set
+        and minutes_remaining <= settings.ending_within_hours * 60
     )
 
     seller, feedback, feedback_count = seller_fields(item)
@@ -168,41 +260,75 @@ def evaluate_item(
     except (TypeError, ValueError):
         bid_count = 0
 
-    decision = decision_for(
-        ratio=ratio,
-        match_score=match_score,
-        feedback_percent=feedback,
-        minimum_feedback=settings.minimum_feedback,
-        target_ratio=settings.target_ratio,
-        headroom=headroom,
+    bid_decision = "N/A"
+    bid_score = 0.0
+    if bid_ratio is not None and bid_headroom is not None:
+        bid_decision = decision_for(
+            ratio=bid_ratio,
+            match_score=match_score,
+            feedback_percent=feedback,
+            minimum_feedback=settings.minimum_feedback,
+            target_ratio=settings.target_ratio,
+            headroom=bid_headroom,
+        )
+        bid_score = score_listing(
+            ratio=bid_ratio,
+            match_score=match_score,
+            feedback_percent=feedback,
+            minutes_remaining=minutes_remaining,
+            bid_count=bid_count,
+            target_ratio=settings.target_ratio,
+        )
+
+    buy_now_decision = "N/A"
+    buy_now_score = 0.0
+    if buy_now_ratio is not None and buy_now_headroom is not None:
+        buy_now_decision = decision_for(
+            ratio=buy_now_ratio,
+            match_score=match_score,
+            feedback_percent=feedback,
+            minimum_feedback=settings.minimum_feedback,
+            target_ratio=settings.target_ratio,
+            headroom=buy_now_headroom,
+        )
+        buy_now_score = score_listing(
+            ratio=buy_now_ratio,
+            match_score=match_score,
+            feedback_percent=feedback,
+            minutes_remaining=24 * 60,
+            bid_count=0,
+            target_ratio=settings.target_ratio,
+        )
+
+    decision = overall_decision(bid_decision, buy_now_decision)
+    action = recommended_action(
+        bid_decision,
+        buy_now_decision,
+        within_sniping_window,
     )
-    score = score_listing(
-        ratio=ratio,
-        match_score=match_score,
-        feedback_percent=feedback,
-        minutes_remaining=minutes_remaining,
-        bid_count=bid_count,
-        target_ratio=settings.target_ratio,
+    score = max(bid_score, buy_now_score)
+
+    # Auctions join the immediate queue when ending soon. Buy It Now listings
+    # join only when they are GREEN/AMBER, because they are actionable now.
+    queue_eligible = (
+        within_sniping_window
+        or buy_now_decision in {"GREEN", "AMBER"}
     )
 
-    active_url = ebay_active_search_url(query)
+    auction_url = ebay_auction_search_url(query)
+    buy_url = ebay_buy_now_search_url(query)
     sold_url = ebay_sold_search_url(query)
 
-    notes = rejection
     if feedback < settings.minimum_feedback:
-        notes = (
-            f"{notes}; " if notes else ""
-        ) + "Seller feedback below configured target"
-    if ratio > settings.target_ratio:
-        notes = (
-            f"{notes}; " if notes else ""
-        ) + "Delivered cost exceeds configured target"
-    if not within_sniping_window:
-        notes = (
-            f"{notes}; " if notes else ""
-        ) + (
-            "Live match found, but outside the configured sniping "
-            f"window of {settings.ending_within_hours:g} hours"
+        notes_parts.append("Seller feedback below configured target")
+    if bid_ratio is not None and bid_ratio > settings.target_ratio:
+        notes_parts.append("Current auction price exceeds configured target")
+    if buy_now_ratio is not None and buy_now_ratio > settings.target_ratio:
+        notes_parts.append("Buy It Now price exceeds configured target")
+    if "AUCTION" in option_set and not within_sniping_window:
+        notes_parts.append(
+            "Auction is outside the configured sniping window of "
+            f"{settings.ending_within_hours:g} hours"
         )
 
     return ListingResult(
@@ -211,17 +337,35 @@ def evaluate_item(
         item_id=str(item.get("itemId", "") or ""),
         item_url=item_url(item),
         image_url=image_url(item),
-        current_bid=round(current_bid, 2),
+        buying_options=tuple(sorted(option_set)),
+        listing_type=listing_type,
+        current_bid=round(current_bid, 2) if current_bid > 0 else None,
+        buy_now_price=round(buy_now_price, 2) if buy_now_price > 0 else None,
         postage=round(postage, 2),
-        delivered=round(delivered, 2),
+        bid_delivered=round(bid_delivered, 2) if bid_delivered is not None else None,
+        buy_now_delivered=(
+            round(buy_now_delivered, 2)
+            if buy_now_delivered is not None
+            else None
+        ),
         market_value=round(market, 2),
-        ratio=ratio,
+        bid_ratio=bid_ratio,
+        buy_now_ratio=buy_now_ratio,
         target_delivered=round(target_delivered, 2),
-        maximum_bid=round(maximum_bid, 2),
-        headroom=round(headroom, 2),
+        maximum_bid=round(maximum_bid, 2) if maximum_bid is not None else None,
+        bid_headroom=round(bid_headroom, 2) if bid_headroom is not None else None,
+        buy_now_headroom=(
+            round(buy_now_headroom, 2)
+            if buy_now_headroom is not None
+            else None
+        ),
+        bid_decision=bid_decision,
+        buy_now_decision=buy_now_decision,
+        recommended_action=action,
         end_time=end_time,
         minutes_remaining=minutes_remaining,
         within_sniping_window=within_sniping_window,
+        queue_eligible=queue_eligible,
         bid_count=bid_count,
         seller=seller,
         feedback_percent=feedback,
@@ -230,11 +374,12 @@ def evaluate_item(
         match_score=match_score,
         match_confidence=confidence_label(match_score),
         search_query=query,
-        active_search_url=active_url,
+        auction_search_url=auction_url,
+        buy_now_search_url=buy_url,
         sold_search_url=sold_url,
         score=score,
         decision=decision,
-        notes=notes,
+        notes="; ".join(dict.fromkeys(notes_parts)),
     )
 
 
@@ -330,7 +475,8 @@ def main() -> int:
                         "results": [],
                         "best_result": None,
                         "target_ratio": settings.target_ratio,
-                        "active_search_url": ebay_active_search_url(query),
+                        "active_search_url": ebay_auction_search_url(query),
+                        "buy_now_search_url": ebay_buy_now_search_url(query),
                         "sold_search_url": ebay_sold_search_url(query),
                         "notes": "Rerolled without contacting eBay.",
                     }
@@ -383,7 +529,8 @@ def main() -> int:
             used_identities.add(candidate.identity)
             queries = build_queries(candidate, settings.search_depth)
             exact_query = queries[0]
-            active_url = ebay_active_search_url(exact_query)
+            active_url = ebay_auction_search_url(exact_query)
+            buy_now_url = ebay_buy_now_search_url(exact_query)
             sold_url = ebay_sold_search_url(exact_query)
 
             logger.info(
@@ -399,7 +546,7 @@ def main() -> int:
             seen_items: set[str] = set()
 
             for query in queries:
-                items = client.search_auctions(query)
+                items = client.search_listings(query, settings.listing_formats)
                 api_calls += 1
 
                 for item in items:
@@ -440,7 +587,7 @@ def main() -> int:
                     for item in card_results
                 )
                 notes = (
-                    f"{len(card_results)} matched live auction(s); "
+                    f"{len(card_results)} matched live listing(s); "
                     f"{in_window_count} inside the sniping window."
                 )
             else:
@@ -450,7 +597,7 @@ def main() -> int:
                     else "NO RESULTS"
                 )
                 best_result = None
-                notes = "No auction passed matching and configured filters."
+                notes = "No listing passed matching and configured filters."
 
             attempts.append(
                 {
@@ -462,6 +609,7 @@ def main() -> int:
                     "best_result": best_result,
                     "target_ratio": settings.target_ratio,
                     "active_search_url": active_url,
+                    "buy_now_search_url": buy_now_url,
                     "sold_search_url": sold_url,
                     "notes": notes,
                 }
@@ -484,7 +632,7 @@ def main() -> int:
         all_results = sorted(
             result_by_item.values(),
             key=lambda item: (
-                not item.within_sniping_window,
+                not item.queue_eligible,
                 item.decision != "GREEN",
                 item.decision == "RED",
                 -item.score,
@@ -496,7 +644,7 @@ def main() -> int:
             [
                 result
                 for result in all_results
-                if result.within_sniping_window
+                if result.queue_eligible
             ],
             key=lambda item: (
                 item.decision != "GREEN",
@@ -528,7 +676,7 @@ def main() -> int:
 
         logger.info("Random Range Sniper completed successfully.")
         logger.info("Cards attempted: %s", len(attempts))
-        logger.info("Cards with matched auctions: %s", successful_cards)
+        logger.info("Cards with matched listings: %s", successful_cards)
         logger.info("Total matched live listings: %s", len(all_results))
         logger.info("Random Snipe Queue rows: %s", len(random_queue))
         logger.info(
