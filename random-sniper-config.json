@@ -29,5 +29,22 @@
     "Topps"
   ],
   "vintage_cutoff_year": 2010,
-  "modern_start_year": 2020
+  "modern_start_year": 2020,
+  "ebay_item_url_template": "https://api.ebay.com/buy/browse/v1/item/{item_id}",
+  "seller_search_query": "pokemon",
+  "seller_discovery_exclusions": [
+    "lot",
+    "job lot",
+    "bundle",
+    "collection",
+    "bulk",
+    "choose",
+    "pick your",
+    "mystery",
+    "random card",
+    "pack",
+    "booster",
+    "deck",
+    "binder"
+  ]
 }

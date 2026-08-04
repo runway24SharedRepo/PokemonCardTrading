@@ -65,6 +65,10 @@ class Settings:
     maximum_attempts: int = 60
     random_seed: str = ""
     listing_formats: str = "Auctions + Buy It Now"
+    expand_green_sellers: bool = True
+    maximum_green_sellers: int = 5
+    seller_item_scan_limit: int = 100
+    maximum_seller_opportunities: int = 5
 
 
 @dataclass
@@ -108,6 +112,11 @@ class ListingResult:
     sold_search_url: str
     score: float
     decision: str
+    condition_flag: str = "AMBER"
+    condition_details: str = ""
+    discovery_source: str = "RANDOM SEARCH"
+    parent_item_id: str = ""
+    seller_group: str = ""
     notes: str = ""
 
     @property

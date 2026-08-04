@@ -29,8 +29,13 @@ from random_sniper.core import (
     recommended_action,
     select_candidates,
 )
+from random_sniper.condition import assess_condition
 from random_sniper.ebay_client import EbayBrowseClient
 from random_sniper.excel_adapter import ExcelAdapter
+from random_sniper.seller_discovery import (
+    CandidateTitleMatcher,
+    group_queue_results,
+)
 
 
 def configure_logging(root: Path) -> logging.Logger:
@@ -131,6 +136,7 @@ def evaluate_item(
     exclusions: list[str],
 ) -> ListingResult | None:
     title = str(item.get("title", "") or "")
+    condition_assessment = assess_condition(item)
     match_score, rejection = listing_match_score(
         candidate,
         title,
@@ -312,6 +318,7 @@ def evaluate_item(
     # join only when they are GREEN/AMBER, because they are actionable now.
     queue_eligible = (
         within_sniping_window
+        or decision == "GREEN"
         or buy_now_decision in {"GREEN", "AMBER"}
     )
 
@@ -370,7 +377,7 @@ def evaluate_item(
         seller=seller,
         feedback_percent=feedback,
         feedback_count=feedback_count,
-        condition=str(item.get("condition", "") or ""),
+        condition=condition_assessment.display,
         match_score=match_score,
         match_confidence=confidence_label(match_score),
         search_query=query,
@@ -379,8 +386,51 @@ def evaluate_item(
         sold_search_url=sold_url,
         score=score,
         decision=decision,
+        condition_flag=condition_assessment.flag,
+        condition_details=condition_assessment.details,
         notes="; ".join(dict.fromkeys(notes_parts)),
     )
+
+
+def enrich_result_condition(
+    result: ListingResult,
+    summary_item: dict[str, Any],
+    client: EbayBrowseClient,
+    logger: logging.Logger,
+) -> bool:
+    """Fetch detailed trading-card condition data for actionable results."""
+
+    if result.decision not in {"GREEN", "AMBER"}:
+        return False
+
+    try:
+        detail = client.get_item_details(result.item_id)
+        assessment = assess_condition(summary_item, detail)
+        result.condition = assessment.display
+        result.condition_flag = assessment.flag
+        result.condition_details = assessment.details
+
+        if assessment.flag == "RED":
+            warning = (
+                "CONDITION RED — financial decision unchanged; "
+                "inspect all photographs before buying or bidding"
+            )
+            if warning not in result.notes:
+                result.notes = (
+                    f"{result.notes}; {warning}"
+                    if result.notes
+                    else warning
+                )
+        return True
+    except Exception as exc:
+        logger.warning(
+            "Could not retrieve detailed condition for %s: %s",
+            result.item_id,
+            exc,
+        )
+        return False
+
+
 
 
 def main() -> int:
@@ -457,6 +507,9 @@ def main() -> int:
         attempts: list[dict[str, Any]] = []
         all_results: list[ListingResult] = []
         api_calls = 0
+        seller_search_calls = 0
+        item_detail_calls = 0
+        seller_opportunities_added = 0
 
         if args.reroll_only:
             selected = select_candidates(
@@ -488,6 +541,9 @@ def main() -> int:
                 attempts,
                 [],
                 [],
+                0,
+                0,
+                0,
                 0,
                 "REROLL ONLY",
             )
@@ -563,6 +619,13 @@ def main() -> int:
                         exclusions,
                     )
                     if evaluated:
+                        if enrich_result_condition(
+                            evaluated,
+                            item,
+                            client,
+                            logger,
+                        ):
+                            item_detail_calls += 1
                         card_results.append(evaluated)
 
             card_results.sort(
@@ -629,7 +692,7 @@ def main() -> int:
             if old is None or result.score > old.score:
                 result_by_item[result.item_id] = result
 
-        all_results = sorted(
+        primary_results = sorted(
             result_by_item.values(),
             key=lambda item: (
                 not item.queue_eligible,
@@ -640,18 +703,135 @@ def main() -> int:
             ),
         )[: int(config["maximum_result_rows"])]
 
-        random_queue = sorted(
-            [
-                result
-                for result in all_results
-                if result.queue_eligible
-            ],
-            key=lambda item: (
-                item.decision != "GREEN",
-                item.decision == "RED",
-                -item.score,
-                item.minutes_remaining,
-            ),
+        seller_results: list[ListingResult] = []
+        if settings.expand_green_sellers:
+            matcher = CandidateTitleMatcher(eligible)
+            seller_exclusions = [
+                *exclusions,
+                *config.get("seller_discovery_exclusions", []),
+            ]
+
+            green_anchors: list[ListingResult] = []
+            seen_sellers: set[str] = set()
+            for result in primary_results:
+                seller_key = result.seller.casefold()
+                if (
+                    result.decision == "GREEN"
+                    and seller_key
+                    and seller_key not in seen_sellers
+                ):
+                    seen_sellers.add(seller_key)
+                    green_anchors.append(result)
+
+            green_anchors = green_anchors[: settings.maximum_green_sellers]
+
+            for anchor in green_anchors:
+                logger.info(
+                    "GREEN seller follow-up: %s — checking other Pokémon listings",
+                    anchor.seller,
+                )
+                try:
+                    seller_items = client.search_seller_listings(
+                        anchor.seller,
+                        settings.listing_formats,
+                        settings.seller_item_scan_limit,
+                    )
+                    seller_search_calls += 1
+                    api_calls += 1
+                except Exception as exc:
+                    logger.warning(
+                        "Seller follow-up failed for %s: %s",
+                        anchor.seller,
+                        exc,
+                    )
+                    continue
+
+                discovered_for_seller: list[ListingResult] = []
+                seen_seller_items: set[str] = set(result_by_item)
+
+                for item in seller_items:
+                    item_id = str(item.get("itemId", "") or "")
+                    if (
+                        not item_id
+                        or item_id in seen_seller_items
+                        or item_id == anchor.item_id
+                    ):
+                        continue
+                    seen_seller_items.add(item_id)
+
+                    candidate = matcher.match(
+                        str(item.get("title", "") or ""),
+                        seller_exclusions,
+                    )
+                    if candidate is None:
+                        continue
+
+                    exact_query = build_queries(candidate, "Fast")[0]
+                    evaluated = evaluate_item(
+                        candidate,
+                        item,
+                        exact_query,
+                        settings,
+                        exclusions,
+                    )
+                    if evaluated is None:
+                        continue
+
+                    # "Other opportunity" means financially GREEN/AMBER.
+                    if evaluated.decision not in {"GREEN", "AMBER"}:
+                        continue
+
+                    evaluated.discovery_source = "↳ SAME SELLER"
+                    evaluated.parent_item_id = anchor.item_id
+                    evaluated.seller_group = anchor.seller
+                    evaluated.queue_eligible = True
+
+                    if enrich_result_condition(
+                        evaluated,
+                        item,
+                        client,
+                        logger,
+                    ):
+                        item_detail_calls += 1
+
+                    discovered_for_seller.append(evaluated)
+
+                discovered_for_seller.sort(
+                    key=lambda item: (
+                        item.decision != "GREEN",
+                        -item.score,
+                        item.minutes_remaining,
+                    )
+                )
+                discovered_for_seller = discovered_for_seller[
+                    : settings.maximum_seller_opportunities
+                ]
+
+                seller_results.extend(discovered_for_seller)
+                seller_opportunities_added += len(discovered_for_seller)
+
+                logger.info(
+                    "Seller follow-up %s: %s additional opportunity/opportunities",
+                    anchor.seller,
+                    len(discovered_for_seller),
+                )
+
+        all_results = [
+            *primary_results,
+            *seller_results,
+        ][: int(config["maximum_result_rows"])]
+
+        primary_queue = [
+            result for result in primary_results
+            if result.queue_eligible
+        ]
+        seller_queue = [
+            result for result in seller_results
+            if result.queue_eligible
+        ]
+        random_queue = group_queue_results(
+            primary_queue,
+            seller_queue,
         )
 
         excel.write_selected_cards(attempts)
@@ -665,6 +845,9 @@ def main() -> int:
             all_results,
             random_queue,
             api_calls,
+            seller_search_calls,
+            item_detail_calls,
+            seller_opportunities_added,
             "LIVE EBAY SCAN",
         )
 
@@ -685,7 +868,13 @@ def main() -> int:
             sum(item.decision == "AMBER" for item in random_queue),
             sum(item.decision == "RED" for item in random_queue),
         )
-        logger.info("eBay API search calls: %s", api_calls)
+        logger.info("Total eBay API calls: %s", api_calls + item_detail_calls)
+        logger.info("Seller follow-up searches: %s", seller_search_calls)
+        logger.info("Detailed condition calls: %s", item_detail_calls)
+        logger.info(
+            "Seller opportunities added: %s",
+            seller_opportunities_added,
+        )
         logger.info("GREEN rows copied to Snipe Queue: %s", copied)
         print()
         print("RANDOM RANGE SNIPER SUCCESSFUL")
@@ -694,6 +883,7 @@ def main() -> int:
         print(f"Cards with results: {successful_cards}")
         print(f"Matched live listings: {len(all_results)}")
         print(f"Random Snipe Queue rows: {len(random_queue)}")
+        print(f"Seller opportunities added: {seller_opportunities_added}")
         print(
             "Queue GREEN opportunities: "
             f"{sum(item.decision == 'GREEN' for item in random_queue)}"

@@ -107,12 +107,52 @@ class ExcelAdapter:
                 result.buy_now_decision,
             )
 
+
+    def _style_condition_cells(
+        self,
+        sheet,
+        row: int,
+        condition_column: int,
+        flag_column: int,
+        flag: str,
+    ) -> None:
+        normalized = str(flag or "UNKNOWN").upper()
+        display_flag = "N/A" if normalized == "UNKNOWN" else normalized
+        self._style_decision_cell(
+            sheet.Cells(row, flag_column),
+            display_flag,
+        )
+        self._style_decision_cell(
+            sheet.Cells(row, condition_column),
+            display_flag,
+        )
+        sheet.Cells(row, condition_column).HorizontalAlignment = -4131
+
+    def _style_seller_discovery_row(
+        self,
+        sheet,
+        row: int,
+        last_column: int,
+    ) -> None:
+        rng = sheet.Range(
+            sheet.Cells(row, 1),
+            sheet.Cells(row, last_column),
+        )
+        rng.Interior.Color = self._excel_rgb(221, 235, 247)
+        rng.Font.Color = self._excel_rgb(31, 78, 121)
+        rng.Font.Italic = True
+
     def read_settings(self) -> Settings:
         sheet = self.sheet("Random Range Sniper")
         values = {
             str(sheet.Cells(row, 1).Value or "").strip():
             sheet.Cells(row, 2).Value
             for row in range(4, 22)
+        }
+        seller_values = {
+            str(sheet.Cells(row, 7).Value or "").strip():
+            sheet.Cells(row, 8).Value
+            for row in range(10, 14)
         }
 
         return Settings(
@@ -160,6 +200,18 @@ class ExcelAdapter:
             random_seed=str(values.get("Random seed") or "").strip(),
             listing_formats=str(
                 values.get("Listing formats") or "Auctions + Buy It Now"
+            ),
+            expand_green_sellers=str(
+                seller_values.get("Expand GREEN sellers") or "YES"
+            ).upper() == "YES",
+            maximum_green_sellers=int(
+                seller_values.get("Maximum GREEN sellers") or 5
+            ),
+            seller_item_scan_limit=int(
+                seller_values.get("Seller listings to inspect") or 100
+            ),
+            maximum_seller_opportunities=int(
+                seller_values.get("Opportunities per seller") or 5
             ),
         )
 
@@ -457,6 +509,8 @@ class ExcelAdapter:
             result.recommended_action,
             result.score,
             result.listing_type,
+            result.discovery_source,
+            result.parent_item_id,
             card_label,
             result.candidate.card_id,
             result.candidate.set_name,
@@ -485,6 +539,8 @@ class ExcelAdapter:
             result.feedback_percent / 100,
             result.feedback_count,
             result.condition,
+            result.condition_flag,
+            result.condition_details,
             result.match_confidence,
             result.search_query,
             "Open Listing",
@@ -502,9 +558,9 @@ class ExcelAdapter:
         results: list[ListingResult],
     ) -> None:
         sheet = self.sheet(sheet_name)
-        sheet.Range("A5:AP1504").ClearContents()
+        sheet.Range("A5:AT1504").ClearContents()
         try:
-            sheet.Range("AJ5:AN1504").Hyperlinks.Delete()
+            sheet.Range("AN5:AR1504").Hyperlinks.Delete()
         except Exception:
             pass
 
@@ -518,43 +574,62 @@ class ExcelAdapter:
         bottom = 4 + len(rows)
         sheet.Range(
             sheet.Cells(5, 1),
-            sheet.Cells(bottom, 42),
+            sheet.Cells(bottom, 46),
         ).Value = tuple(tuple(row) for row in rows)
-
-        self._style_result_decisions(
-            sheet,
-            5,
-            results,
-            overall_column=2,
-            bid_column=25,
-            buy_now_column=26,
-        )
 
         for offset, result in enumerate(results):
             row = 5 + offset
+
+            if result.discovery_source == "↳ SAME SELLER":
+                self._style_seller_discovery_row(
+                    sheet,
+                    row,
+                    46,
+                )
+
+            self._style_decision_cell(
+                sheet.Cells(row, 2),
+                result.decision,
+            )
+            self._style_decision_cell(
+                sheet.Cells(row, 27),
+                result.bid_decision,
+            )
+            self._style_decision_cell(
+                sheet.Cells(row, 28),
+                result.buy_now_decision,
+            )
+            self._style_condition_cells(
+                sheet,
+                row,
+                condition_column=35,
+                flag_column=36,
+                flag=result.condition_flag,
+            )
+
             sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 36),
+                Anchor=sheet.Cells(row, 40),
                 Address=result.item_url,
                 TextToDisplay="Open Listing",
             )
             sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 37),
+                Anchor=sheet.Cells(row, 41),
                 Address=result.auction_search_url,
                 TextToDisplay="Open Auction Search",
             )
             sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 38),
+                Anchor=sheet.Cells(row, 42),
                 Address=result.buy_now_search_url,
                 TextToDisplay="Open Buy Now Search",
             )
             sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 39),
+                Anchor=sheet.Cells(row, 43),
                 Address=result.sold_search_url,
                 TextToDisplay="Open Sold Results",
             )
             if result.candidate.image_url:
                 sheet.Hyperlinks.Add(
-                    Anchor=sheet.Cells(row, 40),
+                    Anchor=sheet.Cells(row, 44),
                     Address=result.candidate.image_url,
                     TextToDisplay="Open Card Image",
                 )
@@ -646,6 +721,9 @@ class ExcelAdapter:
         results: list[ListingResult],
         queue_results: list[ListingResult],
         api_calls: int,
+        seller_search_calls: int,
+        item_detail_calls: int,
+        seller_opportunities_added: int,
         mode: str,
     ) -> None:
         sheet = self.sheet("Random Range Sniper")
@@ -665,10 +743,13 @@ class ExcelAdapter:
             [len(queue_results)],
             [sum(result.decision == "GREEN" for result in queue_results)],
             [sum(result.decision == "AMBER" for result in queue_results)],
-            [api_calls],
+            [seller_search_calls],
+            [seller_opportunities_added],
+            [item_detail_calls],
+            [api_calls + item_detail_calls],
             ["SUCCESS"],
         ]
-        sheet.Range("E4:E15").Value = tuple(tuple(row) for row in values)
+        sheet.Range("E4:E18").Value = tuple(tuple(row) for row in values)
 
     def copy_green_to_snipe_queue(
         self,
@@ -741,7 +822,18 @@ class ExcelAdapter:
 
         for offset, result in enumerate(green[:500]):
             row = 5 + offset
+            if result.discovery_source == "↳ SAME SELLER":
+                self._style_seller_discovery_row(sheet, row, 25)
             self._style_decision_cell(sheet.Cells(row, 2), "GREEN")
+            self._style_decision_cell(
+                sheet.Cells(row, 21),
+                (
+                    "N/A"
+                    if result.condition_flag == "UNKNOWN"
+                    else result.condition_flag
+                ),
+            )
+            sheet.Cells(row, 21).HorizontalAlignment = -4131
             sheet.Hyperlinks.Add(
                 Anchor=sheet.Cells(row, 24),
                 Address=result.item_url,

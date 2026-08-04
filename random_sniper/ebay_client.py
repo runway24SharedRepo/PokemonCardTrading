@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -29,7 +30,7 @@ class SearchCache:
         )
         self.connection.commit()
 
-    def get(self, key: str) -> list[dict[str, Any]] | None:
+    def get(self, key: str) -> Any | None:
         row = self.connection.execute(
             """
             SELECT stored_at, payload
@@ -50,7 +51,7 @@ class SearchCache:
             return None
         return json.loads(row[1])
 
-    def put(self, key: str, payload: list[dict[str, Any]]) -> None:
+    def put(self, key: str, payload: Any) -> None:
         self.connection.execute(
             """
             INSERT INTO random_search_cache(cache_key, stored_at, payload)
@@ -86,6 +87,14 @@ class EbayBrowseClient:
 
         self.token_url = config["ebay_token_url"]
         self.search_url = config["ebay_search_url"]
+        self.item_url_template = config.get(
+            "ebay_item_url_template",
+            "https://api.ebay.com/buy/browse/v1/item/{item_id}",
+        )
+        self.seller_search_query = config.get(
+            "seller_search_query",
+            "pokemon",
+        )
         self.marketplace = os.getenv(
             "EBAY_MARKETPLACE_ID",
             config["marketplace_id"],
@@ -221,6 +230,84 @@ class EbayBrowseClient:
                 ),
                 "sort": "endingSoonest",
                 "limit": min(max(self.results_per_query, 1), 200),
+            },
+            timeout=self.timeout,
+        )
+        items = response.json().get("itemSummaries", [])
+        self.cache.put(cache_key, items)
+        return items
+
+
+    def get_item_details(
+        self,
+        item_id: str,
+    ) -> dict[str, Any]:
+        cache_key = f"phase4.3|item-detail|{self.marketplace}|{item_id}"
+        cached = self.cache.get(cache_key)
+        if isinstance(cached, dict):
+            return cached
+
+        time.sleep(self.delay)
+        url = self.item_url_template.format(
+            item_id=quote(str(item_id), safe=""),
+        )
+        response = self._request(
+            "GET",
+            url,
+            headers={
+                "Authorization": f"Bearer {self._access_token()}",
+                "X-EBAY-C-MARKETPLACE-ID": self.marketplace,
+            },
+            timeout=self.timeout,
+        )
+        payload = response.json()
+        self.cache.put(cache_key, payload)
+        return payload
+
+    def search_seller_listings(
+        self,
+        seller: str,
+        listing_formats: str = "Auctions + Buy It Now",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        mode = str(listing_formats or "Auctions + Buy It Now").strip()
+        if mode == "Auctions only":
+            buying_filter = "buyingOptions:{AUCTION}"
+        elif mode == "Buy It Now only":
+            buying_filter = "buyingOptions:{FIXED_PRICE}"
+        else:
+            buying_filter = "buyingOptions:{AUCTION|FIXED_PRICE}"
+
+        safe_limit = min(max(int(limit), 1), 200)
+        seller_filter = f"sellers:{{{seller}}}"
+        cache_key = (
+            f"phase4.3|seller|{self.marketplace}|{seller.casefold()}|"
+            f"{buying_filter}|{safe_limit}|{self.seller_search_query}"
+        )
+        cached = self.cache.get(cache_key)
+        if isinstance(cached, list):
+            return cached
+
+        time.sleep(self.delay)
+        response = self._request(
+            "GET",
+            self.search_url,
+            headers={
+                "Authorization": f"Bearer {self._access_token()}",
+                "X-EBAY-C-MARKETPLACE-ID": self.marketplace,
+            },
+            params={
+                "q": self.seller_search_query,
+                "filter": ",".join(
+                    [
+                        buying_filter,
+                        seller_filter,
+                        f"deliveryCountry:{self.delivery_country}",
+                        f"itemLocationCountry:{self.location_country}",
+                    ]
+                ),
+                "sort": "endingSoonest",
+                "limit": safe_limit,
             },
             timeout=self.timeout,
         )

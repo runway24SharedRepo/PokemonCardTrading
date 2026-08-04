@@ -5,7 +5,7 @@ chcp 65001 >nul
 set PYTHONUTF8=1
 
 echo ======================================================
-echo Phase 4 - Random Range Sniper
+echo Phase 4.3 - Random Range Sniper
 echo ======================================================
 echo.
 echo Close Pokemon-Auction-Scanner-Dashboard.xlsx before continuing.

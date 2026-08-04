@@ -174,7 +174,10 @@ def setup_control_sheet(workbook):
         "Random queue rows",
         "Queue GREEN opportunities",
         "Queue AMBER opportunities",
-        "eBay API search calls",
+        "GREEN sellers inspected",
+        "Seller opportunities added",
+        "Detailed condition checks",
+        "Total eBay API calls",
         "Run status",
     ]
     sheet.Range("D3:E3").Value = (("Latest Run Summary", "Value"),)
@@ -184,10 +187,10 @@ def setup_control_sheet(workbook):
 
     for row, label in enumerate(kpi_labels, start=4):
         sheet.Cells(row, 4).Value = label
-    sheet.Range("D4:D15").Interior.Color = 0xD9EAD3
-    sheet.Range("D4:D15").Font.Bold = True
-    sheet.Range("E4:E15").Interior.Color = 0xE2F0D9
-    sheet.Range("E4:E15").Font.Bold = True
+    sheet.Range("D4:D18").Interior.Color = 0xD9EAD3
+    sheet.Range("D4:D18").Font.Bold = True
+    sheet.Range("E4:E18").Interior.Color = 0xE2F0D9
+    sheet.Range("E4:E18").Font.Bold = True
     sheet.Range("E4").NumberFormat = "yyyy-mm-dd hh:mm"
 
     instructions = [
@@ -205,6 +208,30 @@ def setup_control_sheet(workbook):
     sheet.Range("G4:G7").Interior.Color = 0xD9EAF7
     sheet.Range("G4:G7").Font.Bold = True
     sheet.Range("H4:H7").WrapText = True
+
+
+    seller_controls = [
+        ("Expand GREEN sellers", "YES"),
+        ("Maximum GREEN sellers", 5),
+        ("Seller listings to inspect", 100),
+        ("Opportunities per seller", 5),
+    ]
+    sheet.Range("G9:H9").Value = (("GREEN Seller Expansion", "Value"),)
+    sheet.Range("G9:H9").Interior.Color = 0x7030A0
+    sheet.Range("G9:H9").Font.Color = 0xFFFFFF
+    sheet.Range("G9:H9").Font.Bold = True
+    for row, item in enumerate(seller_controls, start=10):
+        sheet.Range(f"G{row}:H{row}").Value = (item,)
+    sheet.Range("G10:G13").Interior.Color = 0xE4DFEC
+    sheet.Range("G10:G13").Font.Bold = True
+    sheet.Range("H10:H13").Interior.Color = 0xCCF2FF
+    sheet.Range("H10:H13").Font.Color = 0x0000FF
+    set_validation(sheet.Range("H10"), ["YES", "NO"])
+    set_validation(sheet.Range("H11"), ["1", "2", "3", "5", "10"])
+    set_validation(sheet.Range("H12"), ["25", "50", "100", "150", "200"])
+    set_validation(sheet.Range("H13"), ["1", "3", "5", "10", "15"])
+    sheet.Columns("G").ColumnWidth = 28
+    sheet.Columns("H").ColumnWidth = 42
 
     headers = [
         "Pick", "Selection Status", "Card ID", "Card Name", "Set",
@@ -262,58 +289,62 @@ def _setup_result_or_queue_sheet(
     if created:
         sheet.Cells.Clear()
     else:
-        sheet.Range("A1:AP1504").ClearContents()
-        sheet.Range("A1:AP1504").ClearFormats()
+        sheet.Range("A1:AT1504").ClearContents()
+        sheet.Range("A1:AT1504").ClearFormats()
 
-    apply_title(sheet, 42, title, description, fill)
+    apply_title(sheet, 46, title, description, fill)
 
     headers = [
         "Rank", "Decision", "Recommended Action", "Score", "Listing Type",
-        "Selected Card", "Card ID", "Set", "Card Number", "Variant",
-        "Listing Title", "Item ID", "Current Bid (£)", "Buy It Now (£)",
-        "Postage (£)", "Bid Delivered (£)", "Buy Now Delivered (£)",
-        "Market (£)", "Bid / Market", "Buy Now / Market",
-        "Target Delivered (£)", "Maximum Bid (£)", "Bid Headroom (£)",
-        "Buy Now Headroom (£)", "Bid Decision", "Buy Now Decision",
-        "Ends At", "Minutes Remaining", "Bid Count", "Seller",
-        "Feedback %", "Feedback Count", "Condition", "Match Confidence",
-        "Search Query", "Direct Listing", "Auction Search", "Buy Now Search",
+        "Discovery Source", "Parent Item ID", "Selected Card", "Card ID",
+        "Set", "Card Number", "Variant", "Listing Title", "Item ID",
+        "Current Bid (£)", "Buy It Now (£)", "Postage (£)",
+        "Bid Delivered (£)", "Buy Now Delivered (£)", "Market (£)",
+        "Bid / Market", "Buy Now / Market", "Target Delivered (£)",
+        "Maximum Bid (£)", "Bid Headroom (£)", "Buy Now Headroom (£)",
+        "Bid Decision", "Buy Now Decision", "Ends At",
+        "Minutes Remaining", "Bid Count", "Seller", "Feedback %",
+        "Feedback Count", "Condition", "Condition Flag",
+        "Condition Details", "Match Confidence", "Search Query",
+        "Direct Listing", "Auction Search", "Buy Now Search",
         "Sold Comparables", "Card Image", "Status", "Notes",
     ]
-    sheet.Range("A4:AP4").Value = (tuple(headers),)
+    sheet.Range("A4:AT4").Value = (tuple(headers),)
     apply_header(sheet, 4, len(headers), fill)
-    format_all_borders(sheet, "A4:AP1504")
+    format_all_borders(sheet, "A4:AT1504")
 
     widths = {
-        "A": 7, "B": 11, "C": 22, "D": 9, "E": 22, "F": 40,
-        "G": 17, "H": 24, "I": 12, "J": 22, "K": 50, "L": 20,
-        "M": 13, "N": 14, "O": 11, "P": 15, "Q": 17, "R": 12,
-        "S": 13, "T": 15, "U": 17, "V": 15, "W": 15, "X": 18,
-        "Y": 13, "Z": 15, "AA": 18, "AB": 16, "AC": 10, "AD": 18,
-        "AE": 12, "AF": 14, "AG": 17, "AH": 16, "AI": 35,
-        "AJ": 17, "AK": 19, "AL": 19, "AM": 20, "AN": 18,
-        "AO": 12, "AP": 48,
+        "A": 7, "B": 11, "C": 23, "D": 9, "E": 22, "F": 18,
+        "G": 20, "H": 40, "I": 17, "J": 24, "K": 12, "L": 22,
+        "M": 50, "N": 20, "O": 13, "P": 14, "Q": 11, "R": 15,
+        "S": 17, "T": 12, "U": 13, "V": 15, "W": 17, "X": 15,
+        "Y": 15, "Z": 18, "AA": 13, "AB": 15, "AC": 18,
+        "AD": 16, "AE": 10, "AF": 18, "AG": 12, "AH": 14,
+        "AI": 28, "AJ": 14, "AK": 48, "AL": 16, "AM": 35,
+        "AN": 17, "AO": 19, "AP": 19, "AQ": 20, "AR": 18,
+        "AS": 12, "AT": 52,
     }
     for column, width in widths.items():
         sheet.Columns(column).ColumnWidth = width
 
-    sheet.Range("M5:R1504").NumberFormat = '£0.00'
-    sheet.Range("S5:T1504").NumberFormat = "0.0%"
-    sheet.Range("U5:X1504").NumberFormat = '£0.00'
-    sheet.Range("AA5:AA1504").NumberFormat = "yyyy-mm-dd hh:mm"
-    sheet.Range("AE5:AE1504").NumberFormat = "0.0%"
-    sheet.Range("A5:AP1504").VerticalAlignment = XL_TOP
-    sheet.Range("F5:AP1504").WrapText = True
+    sheet.Range("O5:T1504").NumberFormat = '£0.00'
+    sheet.Range("U5:V1504").NumberFormat = "0.0%"
+    sheet.Range("W5:Z1504").NumberFormat = '£0.00'
+    sheet.Range("AC5:AC1504").NumberFormat = "yyyy-mm-dd hh:mm"
+    sheet.Range("AG5:AG1504").NumberFormat = "0.0%"
+    sheet.Range("A5:AT1504").VerticalAlignment = XL_TOP
+    sheet.Range("F5:AT1504").WrapText = True
 
-    set_validation(sheet.Range("AO5:AO1504"), [
-        "NEW", "CHECKED", "WATCH", "BID", "BUY NOW", "REJECTED", "ENDED",
+    set_validation(sheet.Range("AS5:AS1504"), [
+        "NEW", "CHECKED", "WATCH", "BID", "BUY NOW",
+        "REJECTED", "ENDED",
     ])
 
     try:
         sheet.Activate()
         workbook.Application.ActiveWindow.FreezePanes = False
         workbook.Application.ActiveWindow.SplitRow = 4
-        workbook.Application.ActiveWindow.SplitColumn = 5
+        workbook.Application.ActiveWindow.SplitColumn = 7
         workbook.Application.ActiveWindow.FreezePanes = True
     except Exception:
         pass
@@ -321,7 +352,7 @@ def _setup_result_or_queue_sheet(
     try:
         if sheet.AutoFilterMode:
             sheet.AutoFilterMode = False
-        sheet.Range("A4:AP1504").AutoFilter()
+        sheet.Range("A4:AT1504").AutoFilter()
     except Exception:
         pass
 
@@ -332,9 +363,9 @@ def setup_results_sheet(workbook):
         "Random Snipe Results",
         "Random Snipe Results — Auctions and Buy It Now Listings",
         (
-            "Every reliably matched live listing appears here. Auction and "
-            "Buy It Now prices are evaluated independently, with separate "
-            "delivered costs, ratios, decisions and a recommended action."
+            "Every reliably matched live listing appears here. GREEN sellers "
+            "are optionally expanded to find other cards, and detailed eBay "
+            "condition data is shown independently from the financial decision."
         ),
         0x006100,
     )
@@ -346,8 +377,9 @@ def setup_random_queue_sheet(workbook):
         "Random Snipe Queue",
         "Random Snipe Queue — Immediate Bid and Buy It Now Opportunities",
         (
-            "Contains auctions inside the configured ending window plus "
-            "GREEN/AMBER Buy It Now opportunities that can be acted on now."
+            "Contains immediate opportunities. Additional cards discovered "
+            "from a GREEN seller are placed directly below that seller's "
+            "original row and marked ↳ SAME SELLER."
         ),
         0x9C6500,
     )
