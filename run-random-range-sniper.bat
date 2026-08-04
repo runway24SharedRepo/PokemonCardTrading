@@ -5,7 +5,7 @@ chcp 65001 >nul
 set PYTHONUTF8=1
 
 echo ======================================================
-echo Phase 4.3 - Random Range Sniper
+echo Phase 5.2 - Random Range Sniper + eBay Watchlist
 echo ======================================================
 echo.
 echo Close Pokemon-Auction-Scanner-Dashboard.xlsx before continuing.
@@ -29,6 +29,7 @@ if "%EXITCODE%"=="0" (
     echo   - Random Snipe Results
     echo   - Random Snipe Queue
     echo   - Random Snipe History
+    echo GREEN listings are also synchronised to My eBay Watchlist.
     echo Review separate BID and BUY NOW decisions
     echo   - Snipe Queue
 ) else (

@@ -36,6 +36,7 @@ from random_sniper.seller_discovery import (
     CandidateTitleMatcher,
     group_queue_results,
 )
+from ebay_watchlist import sync_green_results
 
 
 def configure_logging(root: Path) -> logging.Logger:
@@ -834,6 +835,13 @@ def main() -> int:
             seller_queue,
         )
 
+        watchlist_summary = sync_green_results(
+            all_results,
+            root=root,
+            source="RANDOM SNIPER",
+            logger=logger,
+        )
+
         excel.write_selected_cards(attempts)
         excel.write_results(all_results)
         excel.write_random_snipe_queue(random_queue)
@@ -884,6 +892,7 @@ def main() -> int:
         print(f"Matched live listings: {len(all_results)}")
         print(f"Random Snipe Queue rows: {len(random_queue)}")
         print(f"Seller opportunities added: {seller_opportunities_added}")
+        print(f"eBay Watchlist: {watchlist_summary.display}")
         print(
             "Queue GREEN opportunities: "
             f"{sum(item.decision == 'GREEN' for item in random_queue)}"

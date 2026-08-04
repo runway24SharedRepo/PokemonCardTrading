@@ -1,7 +1,7 @@
-from live_radar.condition import assess_condition
+from random_sniper.condition import assess_condition
 
 
-def test_poor_is_red():
+def test_poor_is_red_even_when_ungraded():
     assessment = assess_condition(
         {"condition": "Ungraded"},
         {
@@ -10,10 +10,7 @@ def test_poor_is_red():
                 {
                     "name": "Card Condition",
                     "values": [
-                        {
-                            "content":
-                            "Heavily Played (Poor)"
-                        }
+                        {"content": "Heavily Played (Poor)"}
                     ],
                 }
             ],
@@ -23,10 +20,17 @@ def test_poor_is_red():
     assert "Poor" in assessment.display
 
 
-def test_ungraded_without_detail_is_amber():
+def test_fresh_pack_is_green():
     assessment = assess_condition(
         {"condition": "Ungraded"},
+        {
+            "conditionDescription": (
+                "Comparable to a fresh pack. "
+                "Flaws may include minor corner and edge wear."
+            )
+        },
     )
+    # Explicit wear wording is intentionally cautious.
     assert assessment.flag == "AMBER"
 
 
@@ -37,11 +41,10 @@ def test_near_mint_descriptor_is_green():
             "conditionDescriptors": [
                 {
                     "name": "40001",
-                    "values": [
-                        {"content": "400010"}
-                    ],
+                    "values": [{"content": "400010"}],
                 }
-            ],
+            ]
         },
     )
     assert assessment.flag == "GREEN"
+    assert "Near Mint" in assessment.display

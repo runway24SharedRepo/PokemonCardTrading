@@ -6,7 +6,7 @@ set PYTHONUTF8=1
 set PYTHONUNBUFFERED=1
 
 echo ======================================================
-echo Phase 5 - Live Opportunity Radar
+echo Phase 5.2 - Live Opportunity Radar + eBay Watchlist
 echo ======================================================
 echo.
 echo Broad UK Pokemon auction radar:
@@ -15,6 +15,7 @@ echo   - Exact card matching against the full market database
 echo   - Maximum-bid calculation
 echo   - Detailed condition warning
 echo   - GREEN seller expansion
+echo   - GREEN listings added to My eBay Watchlist
 echo.
 echo Close Pokemon-Auction-Scanner-Dashboard.xlsx before continuing.
 echo Live progress appears below and is also saved in:
