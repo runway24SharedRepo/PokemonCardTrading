@@ -6,12 +6,19 @@ set PYTHONUTF8=1
 set PYTHONUNBUFFERED=1
 
 echo ======================================================
-echo Seller Radar - Reset One Seller's Scan History
+echo Seller Radar - Select and Reset Tracked Sellers
 echo ======================================================
 echo.
-echo This does not delete the seller worksheet.
-echo It makes the next scan begin again from the first currently active
-echo listing for the selected seller.
+echo Displays every seller currently tracked by Seller Radar.
+echo You can remove one or several histories using numbers such as:
+echo.
+echo   3;4
+echo   1,3
+echo   2-4
+echo   A
+echo.
+echo This resets scan progress only.
+echo Existing Seller worksheets in Excel are preserved.
 echo.
 
 if not exist ".venv\Scripts\python.exe" (
@@ -19,14 +26,7 @@ if not exist ".venv\Scripts\python.exe" (
     goto :end
 )
 
-set "SELLER="
-set /p "SELLER=Enter the exact eBay seller username: "
-if not defined SELLER (
-    echo ERROR: A seller username is required.
-    goto :end
-)
-
-".venv\Scripts\python.exe" -u manage_seller_radar_history.py --seller "%SELLER%" --reset
+".venv\Scripts\python.exe" -u manage_seller_radar_history.py --interactive-reset
 set EXITCODE=%ERRORLEVEL%
 
 echo.
