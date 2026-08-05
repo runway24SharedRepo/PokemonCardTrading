@@ -57,13 +57,17 @@ def test_random_result_row_has_links_at_columns_23_to_27():
         notes="",
     )
     row = RandomExcel._result_row(1, result)
-    assert len(row) == 46
-    assert row[22:27] == [
+    assert len(row) == 50
+    assert row[22:31] == [
         "Open Listing",
         "Open Card Image",
         "Open Auction Search",
         "Open Buy Now Search",
         "Open Sold Results",
+        "Open UK Market",
+        "Open TCGplayer",
+        "Open Cardmarket",
+        "Open PriceCharting",
     ]
 
 
@@ -113,10 +117,14 @@ def test_live_result_row_has_links_at_columns_20_to_23():
         sold_search_url="https://example/sold",
     )
     row = LiveExcel._result_row(1, result)
-    assert len(row) == 40
-    assert row[19:23] == [
+    assert len(row) == 44
+    assert row[19:27] == [
         "Open Listing",
         "Open Card Image",
         "Open Auction Search",
         "Open Sold Results",
+        "Open UK Market",
+        "Open TCGplayer",
+        "Open Cardmarket",
+        "Open PriceCharting",
     ]

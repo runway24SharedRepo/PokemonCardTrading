@@ -222,7 +222,7 @@ def main() -> int:
     backup_folder = root / "backups"
     backup_folder.mkdir(exist_ok=True)
     backup_path = backup_folder / (
-        f"{workbook_path.stem}-before-phase5-4-market-links-"
+        f"{workbook_path.stem}-before-phase5-4-1-smart-market-links-"
         f"{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         f"{workbook_path.suffix}"
     )
@@ -277,14 +277,15 @@ def main() -> int:
         excel.ScreenUpdating = True
         excel.Quit()
 
-    print("PHASE 5.4 MARKET-LINK UPGRADE SUCCESSFUL")
+    print("PHASE 5.4.1 SMART MARKET-LINK REFRESH SUCCESSFUL")
     print(f"Workbook backup: {backup_path}")
     print("Updated worksheets:")
     for name in updated:
         print(f"  - {name}")
     print()
-    print("Added after Sold Comparables:")
+    print("Refreshed after Sold Comparables:")
     print("  UK Market | TCGplayer | Cardmarket | PriceCharting")
+    print("Query format: clean card name + collector number/ID")
     return 0
 
 

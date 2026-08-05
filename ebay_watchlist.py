@@ -455,20 +455,21 @@ class EbayWatchlistClient:
             "<RemoveAllItems>true</RemoveAllItems>",
         )
 
-    def get_watchlist_count(self) -> tuple[int, int | None]:
-        # GetMyeBayBuying returns the watch-list total inside its pagination
-        # result rather than in the Add/Remove WatchListCount field.
-        return self._get_watchlist_count_raw()
-
-    def _get_watchlist_count_raw(self) -> tuple[int, int | None]:
+    def _get_watchlist_page(
+        self,
+        page_number: int,
+        entries_per_page: int = 200,
+    ) -> tuple[list[str], int, int, int | None]:
         call_name = "GetMyeBayBuying"
+        safe_page = max(1, int(page_number))
+        safe_entries = max(1, min(200, int(entries_per_page)))
         inner_xml = (
-            "<DetailLevel>ReturnSummary</DetailLevel>"
+            "<DetailLevel>ReturnAll</DetailLevel>"
             "<WatchList>"
             "<Include>true</Include>"
             "<Pagination>"
-            "<EntriesPerPage>1</EntriesPerPage>"
-            "<PageNumber>1</PageNumber>"
+            f"<EntriesPerPage>{safe_entries}</EntriesPerPage>"
+            f"<PageNumber>{safe_page}</PageNumber>"
             "</Pagination>"
             "</WatchList>"
         )
@@ -504,6 +505,7 @@ class EbayWatchlistClient:
                 f"HTTP {response.status_code} "
                 f"{response.text[:1000]}"
             )
+
         root = ET.fromstring(response.content)
         acknowledgement = _xml_text(root, "Ack")
         if acknowledgement not in {"Success", "Warning"}:
@@ -512,17 +514,138 @@ class EbayWatchlistClient:
                 + ("; ".join(_response_errors(root)) or acknowledgement)
             )
 
-        total_element = root.find(
-            ".//"
-            f"{{{XML_NAMESPACE}}}WatchList/"
+        watchlist = root.find(
+            f".//{{{XML_NAMESPACE}}}WatchList"
+        )
+        if watchlist is None:
+            return [], 0, 0, None
+
+        item_ids = [
+            str(element.text or "").strip()
+            for element in watchlist.findall(
+                ".//"
+                f"{{{XML_NAMESPACE}}}ItemArray/"
+                f"{{{XML_NAMESPACE}}}Item/"
+                f"{{{XML_NAMESPACE}}}ItemID"
+            )
+            if str(element.text or "").strip()
+        ]
+
+        total_pages_element = watchlist.find(
+            f"{{{XML_NAMESPACE}}}PaginationResult/"
+            f"{{{XML_NAMESPACE}}}TotalNumberOfPages"
+        )
+        total_entries_element = watchlist.find(
             f"{{{XML_NAMESPACE}}}PaginationResult/"
             f"{{{XML_NAMESPACE}}}TotalNumberOfEntries"
         )
-        total = int(total_element.text or 0) if total_element is not None else 0
+        total_pages = (
+            int(total_pages_element.text or 0)
+            if total_pages_element is not None
+            else 0
+        )
+        total_entries = (
+            int(total_entries_element.text or 0)
+            if total_entries_element is not None
+            else len(item_ids)
+        )
 
         maximum_text = _xml_text(root, "WatchListMaximum")
         maximum = int(maximum_text) if maximum_text.isdigit() else None
+        return item_ids, total_pages, total_entries, maximum
+
+    def get_watchlist_item_ids(self) -> tuple[list[str], int | None]:
+        first_ids, total_pages, _, maximum = self._get_watchlist_page(1)
+        all_ids = list(first_ids)
+
+        for page_number in range(2, max(1, total_pages) + 1):
+            page_ids, _, _, page_maximum = self._get_watchlist_page(
+                page_number
+            )
+            all_ids.extend(page_ids)
+            if maximum is None and page_maximum is not None:
+                maximum = page_maximum
+
+        return list(dict.fromkeys(all_ids)), maximum
+
+    def get_watchlist_count(self) -> tuple[int, int | None]:
+        _, _, total, maximum = self._get_watchlist_page(
+            1,
+            entries_per_page=1,
+        )
         return total, maximum
+
+    def clear_watchlist_robust(
+        self,
+    ) -> tuple[int, int, int | None, str]:
+        """Clear the Watchlist, with a specific-item fallback.
+
+        Returns: removed item count, remaining item count, maximum, method.
+        """
+
+        before_count, maximum = self.get_watchlist_count()
+        if before_count == 0:
+            return 0, 0, maximum, "already empty"
+
+        try:
+            result = self.remove_all_items()
+            remaining = (
+                result.watchlist_count
+                if result.watchlist_count is not None
+                else self.get_watchlist_count()[0]
+            )
+            return (
+                max(0, before_count - remaining),
+                remaining,
+                result.watchlist_maximum or maximum,
+                "RemoveAllItems",
+            )
+        except RuntimeError as exc:
+            # Error 20820 is eBay's generic "nothing removed" response.
+            # Fall back to reading the actual ItemIDs and removing them in
+            # batches. This is also more diagnostic when the token belongs
+            # to a different eBay account than expected.
+            if "20820" not in str(exc):
+                raise
+
+            item_ids, fallback_maximum = self.get_watchlist_item_ids()
+            if not item_ids:
+                return 0, 0, fallback_maximum or maximum, "already empty"
+
+            removed = 0
+            failures: list[str] = []
+            for start in range(0, len(item_ids), self.batch_size):
+                batch = item_ids[start:start + self.batch_size]
+                try:
+                    self.remove_item_ids(batch)
+                    removed += len(batch)
+                except RuntimeError as batch_error:
+                    # Retry one by one so a variation or stale listing cannot
+                    # prevent ordinary watched listings from being removed.
+                    for item_id in batch:
+                        try:
+                            self.remove_item_ids([item_id])
+                            removed += 1
+                        except RuntimeError as item_error:
+                            failures.append(
+                                f"{item_id}: {item_error}"
+                            )
+
+            remaining, final_maximum = self.get_watchlist_count()
+            if remaining and failures:
+                sample = "; ".join(failures[:5])
+                raise RuntimeError(
+                    f"Removed {removed} Watchlist item(s), but {remaining} "
+                    f"remain. Some entries may be multi-variation or stale. "
+                    f"Examples: {sample}"
+                )
+
+            return (
+                removed,
+                remaining,
+                final_maximum or fallback_maximum or maximum,
+                "specific ItemID fallback",
+            )
 
 
 class ManagedWatchlistLedger:

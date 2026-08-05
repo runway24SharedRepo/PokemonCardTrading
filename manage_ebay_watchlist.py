@@ -171,20 +171,38 @@ def main() -> int:
                     print("Cancelled. No eBay items were changed.")
                     return 0
 
-            result = client.remove_all_items()
-            ledger.mark_removed(ledger.active_ids())
-            ledger.save()
+            print("Reading the current eBay Watchlist first...")
+            removed, remaining, maximum, method = (
+                client.clear_watchlist_robust()
+            )
 
-            print("The entire eBay Watchlist was cleared.")
-            if result.watchlist_count is not None:
+            if remaining == 0:
+                ledger.mark_removed(ledger.active_ids())
+                ledger.save()
+
+            if method == "already empty":
                 print(
-                    f"eBay Watchlist now: {result.watchlist_count}"
-                    + (
-                        f"/{result.watchlist_maximum}"
-                        if result.watchlist_maximum is not None
-                        else ""
-                    )
+                    "The API-visible Watchlist for this authorised "
+                    "eBay account is already empty."
                 )
+                print(
+                    "If the eBay website still shows watched items, "
+                    "the token probably belongs to a different account."
+                )
+            else:
+                print(
+                    f"Removed/confirmed Watchlist items: {removed}"
+                )
+                print(f"Cleanup method: {method}")
+
+            print(
+                f"eBay Watchlist now: {remaining}"
+                + (
+                    f"/{maximum}"
+                    if maximum is not None
+                    else ""
+                )
+            )
             return 0
 
         print("Unknown selection. No eBay items were changed.")
