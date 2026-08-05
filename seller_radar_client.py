@@ -3,12 +3,25 @@ from __future__ import annotations
 import os
 import random
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
 
 import requests
 from requests.auth import HTTPBasicAuth
+
+
+@dataclass
+class SellerInventoryBatch:
+    items: list[dict[str, Any]]
+    pages_scanned: int
+    listings_examined: int
+    skipped_previously_scanned: int
+    duplicate_items: int
+    reported_total: int | None
+    inventory_exhausted: bool
+    page_limit_reached: bool
 
 
 class SellerRadarClient:
@@ -175,37 +188,74 @@ class SellerRadarClient:
             "X-EBAY-C-MARKETPLACE-ID": self.marketplace,
         }
 
-    def search_seller_inventory(
+    def search_next_unseen_inventory(
         self,
         seller: str,
         requested_count: int,
+        seen_item_ids: set[str] | None = None,
         query: str = "pokemon",
-    ) -> list[dict[str, Any]]:
-        """Fetch up to requested_count active auction/fixed-price listings."""
+    ) -> SellerInventoryBatch:
+        """Collect the next requested_count listing IDs not in seller history.
 
-        requested_count = max(1, min(int(requested_count), 1000))
+        Every run starts from offset zero. This is intentional: eBay's
+        ending-soonest order changes as listings end or new listings appear.
+        Item-ID history prevents duplicates without relying on an unstable
+        numeric cursor.
+        """
+
+        requested_count = max(
+            1,
+            min(int(requested_count), 1000),
+        )
+        history_ids = {
+            str(value).strip()
+            for value in (seen_item_ids or set())
+            if str(value).strip()
+        }
+        maximum_pages = max(
+            1,
+            min(
+                50,
+                int(
+                    os.getenv(
+                        "SELLER_RADAR_MAX_SEARCH_PAGES",
+                        "25",
+                    )
+                ),
+            ),
+        )
+
         output: list[dict[str, Any]] = []
-        seen: set[str] = set()
+        session_ids: set[str] = set()
         offset = 0
         page_number = 0
+        examined = 0
+        skipped_history = 0
+        duplicates = 0
+        reported_total: int | None = None
+        exhausted = False
+        page_limit_reached = False
 
-        while len(output) < requested_count:
-            remaining = requested_count - len(output)
-            page_size = min(200, remaining)
+        filters = ",".join(
+            [
+                "buyingOptions:{AUCTION|FIXED_PRICE}",
+                f"sellers:{{{seller}}}",
+                f"deliveryCountry:{self.delivery_country}",
+                f"itemLocationCountry:{self.location_country}",
+            ]
+        )
+
+        while (
+            len(output) < requested_count
+            and page_number < maximum_pages
+        ):
             page_number += 1
+            page_size = 200
 
             self.status(
-                f"SELLER SEARCH PAGE {page_number} | "
-                f"offset={offset} | requesting up to {page_size} listing(s)"
-            )
-
-            filters = ",".join(
-                [
-                    "buyingOptions:{AUCTION|FIXED_PRICE}",
-                    f"sellers:{{{seller}}}",
-                    f"deliveryCountry:{self.delivery_country}",
-                    f"itemLocationCountry:{self.location_country}",
-                ]
+                f"SELLER SEARCH PAGE {page_number}/{maximum_pages} | "
+                f"offset={offset} | target unseen "
+                f"{len(output)}/{requested_count}"
             )
 
             time.sleep(self.delay)
@@ -213,7 +263,9 @@ class SellerRadarClient:
             response = self._request(
                 "GET",
                 self.search_url,
-                purpose=f"seller inventory page {page_number}",
+                purpose=(
+                    f"seller inventory page {page_number}"
+                ),
                 headers=self._headers(),
                 params={
                     "q": query,
@@ -224,35 +276,87 @@ class SellerRadarClient:
                 },
                 timeout=self.timeout,
             )
-            items = response.json().get(
-                "itemSummaries",
-                [],
-            )
+            payload = response.json()
+            items = payload.get("itemSummaries", [])
 
-            added = 0
+            try:
+                if payload.get("total") is not None:
+                    reported_total = int(payload["total"])
+            except (TypeError, ValueError):
+                pass
+
+            new_from_page = 0
+            page_history_skips = 0
+
             for item in items:
+                examined += 1
                 item_id = str(
                     item.get("itemId", "") or ""
                 ).strip()
-                if not item_id or item_id in seen:
+                if not item_id:
                     continue
-                seen.add(item_id)
+                if item_id in session_ids:
+                    duplicates += 1
+                    continue
+
+                session_ids.add(item_id)
+                if item_id in history_ids:
+                    skipped_history += 1
+                    page_history_skips += 1
+                    continue
+
                 output.append(item)
-                added += 1
+                new_from_page += 1
                 if len(output) >= requested_count:
                     break
 
             self.status(
                 f"Page {page_number}: eBay returned {len(items)}; "
-                f"{added} new; {len(output)} accumulated."
+                f"skipped previously scanned {page_history_skips}; "
+                f"selected unseen {new_from_page}; "
+                f"batch {len(output)}/{requested_count}."
             )
 
-            if len(items) < page_size or added == 0:
+            if len(output) >= requested_count:
+                break
+
+            if len(items) < page_size:
+                exhausted = True
                 break
 
             offset += page_size
 
-        return output
+        if (
+            len(output) < requested_count
+            and not exhausted
+            and page_number >= maximum_pages
+        ):
+            page_limit_reached = True
+
+        return SellerInventoryBatch(
+            items=output,
+            pages_scanned=page_number,
+            listings_examined=examined,
+            skipped_previously_scanned=skipped_history,
+            duplicate_items=duplicates,
+            reported_total=reported_total,
+            inventory_exhausted=exhausted,
+            page_limit_reached=page_limit_reached,
+        )
+
+    def search_seller_inventory(
+        self,
+        seller: str,
+        requested_count: int,
+        query: str = "pokemon",
+    ) -> list[dict[str, Any]]:
+        """Backward-compatible first-batch search without history."""
+        return self.search_next_unseen_inventory(
+            seller=seller,
+            requested_count=requested_count,
+            seen_item_ids=set(),
+            query=query,
+        ).items
 
     def get_item_details(
         self,

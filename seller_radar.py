@@ -34,6 +34,7 @@ from random_sniper.seller_discovery import (
 )
 from seller_radar_client import SellerRadarClient
 from seller_radar_excel import SellerRadarExcelAdapter
+from seller_radar_history import SellerRadarHistory
 
 
 DEFAULT_LISTING_COUNT = 50
@@ -222,24 +223,75 @@ def main() -> int:
         matcher = CandidateTitleMatcher(candidates)
         exclusions = list(config["default_exclusions"])
 
+        history = SellerRadarHistory(
+            root / "data" / "seller-radar-scan-history.json"
+        )
+        seen_item_ids = history.seen_item_ids(seller)
+        previously_scanned = len(seen_item_ids)
+        batch_number = history.completed_run_count(seller) + 1
+
+        logger.info(
+            "Seller history: %s listing ID(s) previously scanned | "
+            "next batch=%s.",
+            previously_scanned,
+            batch_number,
+        )
+
         client = SellerRadarClient(
             config,
             lambda message: logger.info(message),
         )
 
-        items = client.search_seller_inventory(
+        batch = client.search_next_unseen_inventory(
             seller=seller,
             requested_count=requested,
+            seen_item_ids=seen_item_ids,
             query=os.getenv(
                 "SELLER_RADAR_QUERY",
                 "pokemon",
             ).strip() or "pokemon",
         )
+        items = batch.items
 
         logger.info(
-            "FETCH COMPLETE | %s active Pokémon-search listing(s).",
+            "FETCH COMPLETE | selected unseen=%s | examined=%s | "
+            "skipped previously scanned=%s | pages=%s.",
             len(items),
+            batch.listings_examined,
+            batch.skipped_previously_scanned,
+            batch.pages_scanned,
         )
+
+        if not items:
+            print()
+            print("SELLER RADAR — NO UNSCANNED ACTIVE LISTINGS")
+            print(f"Seller: {seller}")
+            print(
+                f"Previously scanned listing IDs: "
+                f"{previously_scanned}"
+            )
+            print(
+                f"Active listings examined this run: "
+                f"{batch.listings_examined}"
+            )
+            print(
+                f"Previously scanned listings skipped: "
+                f"{batch.skipped_previously_scanned}"
+            )
+            if batch.inventory_exhausted:
+                print(
+                    "All currently API-visible Pokémon listings for "
+                    "this seller have already been scanned."
+                )
+            elif batch.page_limit_reached:
+                print(
+                    "No unseen listing was found before the configured "
+                    "page-safety limit."
+                )
+            print(
+                "The existing seller worksheet was left unchanged."
+            )
+            return 0
         logger.info(
             "IDENTIFICATION STAGE | matching titles against the local "
             "card database."
@@ -247,6 +299,7 @@ def main() -> int:
 
         results: list[ListingResult] = []
         unmatched: list[dict[str, Any]] = []
+        outcomes: dict[str, dict[str, Any]] = {}
         detail_limit = max(
             0,
             int(
@@ -279,6 +332,14 @@ def main() -> int:
                 unmatched.append(
                     unmatched_row(item, exclusion)
                 )
+                outcomes[
+                    str(item.get("itemId", "") or "")
+                ] = {
+                    "matched": False,
+                    "decision": "",
+                    "reason": exclusion,
+                    "listing_type": listing_type(item),
+                }
                 continue
 
             candidate = matcher.match(
@@ -286,15 +347,24 @@ def main() -> int:
                 exclusions,
             )
             if candidate is None:
+                reason = (
+                    "No high-confidence exact card-name and "
+                    "card-number match in the priced database"
+                )
                 unmatched.append(
                     unmatched_row(
                         item,
-                        (
-                            "No high-confidence exact card-name and "
-                            "card-number match in the priced database"
-                        ),
+                        reason,
                     )
                 )
+                outcomes[
+                    str(item.get("itemId", "") or "")
+                ] = {
+                    "matched": False,
+                    "decision": "",
+                    "reason": reason,
+                    "listing_type": listing_type(item),
+                }
                 continue
 
             query = build_queries(
@@ -309,15 +379,24 @@ def main() -> int:
                 exclusions,
             )
             if evaluated is None:
+                reason = (
+                    "The card was identified, but price or "
+                    "listing data was insufficient for evaluation"
+                )
                 unmatched.append(
                     unmatched_row(
                         item,
-                        (
-                            "The card was identified, but price or "
-                            "listing data was insufficient for evaluation"
-                        ),
+                        reason,
                     )
                 )
+                outcomes[
+                    str(item.get("itemId", "") or "")
+                ] = {
+                    "matched": True,
+                    "decision": "",
+                    "reason": reason,
+                    "listing_type": listing_type(item),
+                }
                 continue
 
             evaluated.discovery_source = (
@@ -343,6 +422,12 @@ def main() -> int:
                     detail_checks += 1
 
             results.append(evaluated)
+            outcomes[evaluated.item_id] = {
+                "matched": True,
+                "decision": evaluated.decision,
+                "reason": "",
+                "listing_type": evaluated.listing_type,
+            }
 
         # Remove duplicates defensively and keep the strongest card match.
         deduplicated: dict[str, ListingResult] = {}
@@ -417,6 +502,17 @@ def main() -> int:
             "total_calls": client.total_api_calls,
             "target_ratio": radar_settings.target_ratio,
             "watchlist": watchlist_summary.display,
+            "batch_number": batch_number,
+            "previously_scanned": previously_scanned,
+            "new_batch": len(items),
+            "listings_examined": batch.listings_examined,
+            "skipped_seen": batch.skipped_previously_scanned,
+            "history_after": previously_scanned + len(items),
+            "inventory_status": (
+                "Current active inventory exhausted"
+                if batch.inventory_exhausted
+                else "More unseen listings may remain"
+            ),
         }
 
         logger.info(
@@ -430,6 +526,41 @@ def main() -> int:
         )
         excel.save()
 
+        run_id = (
+            f"SELLER-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        )
+        recorded = history.record_batch(
+            seller=seller,
+            items=items,
+            outcomes=outcomes,
+            run_summary={
+                "run_id": run_id,
+                "batch_number": batch_number,
+                "requested": requested,
+                "selected_unseen": len(items),
+                "pages_scanned": batch.pages_scanned,
+                "listings_examined": batch.listings_examined,
+                "skipped_previously_scanned":
+                    batch.skipped_previously_scanned,
+                "reported_total": batch.reported_total,
+                "inventory_exhausted": batch.inventory_exhausted,
+                "matched": len(results),
+                "unmatched": len(unmatched),
+                "green": green,
+                "amber": amber,
+                "red": red,
+                "worksheet": sheet_name,
+            },
+        )
+        history.save()
+        history_total = history.scanned_count(seller)
+
+        logger.info(
+            "Seller history saved: %s new item ID(s); "
+            "%s total for this seller.",
+            recorded,
+            history_total,
+        )
         logger.info(
             "SELLER RADAR SUCCESSFUL | sheet=%s",
             sheet_name,
@@ -439,8 +570,20 @@ def main() -> int:
         print("SELLER RADAR SUCCESSFUL")
         print(f"Seller: {seller}")
         print(f"Worksheet: {sheet_name}")
-        print(f"Requested listings: {requested}")
-        print(f"Listings fetched: {len(items)}")
+        print(f"Batch number: {batch_number}")
+        print(f"Requested unseen listings: {requested}")
+        print(f"Previously scanned before this run: {previously_scanned}")
+        print(f"New unseen listings selected: {len(items)}")
+        print(
+            f"API-visible listings examined: "
+            f"{batch.listings_examined}"
+        )
+        print(
+            f"Previously scanned listings skipped: "
+            f"{batch.skipped_previously_scanned}"
+        )
+        print(f"Search pages used: {batch.pages_scanned}")
+        print(f"Seller history total after run: {history_total}")
         print(f"Exact card matches: {len(results)}")
         print(f"GREEN: {green}")
         print(f"AMBER: {amber}")

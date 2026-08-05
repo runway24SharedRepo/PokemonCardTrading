@@ -6,11 +6,12 @@ set PYTHONUTF8=1
 set PYTHONUNBUFFERED=1
 
 echo ======================================================
-echo Phase 5.3 - eBay Seller Radar
+echo Phase 5.3.2 - eBay Seller Radar - Next Unscanned Batch
 echo ======================================================
 echo.
 echo Creates or refreshes one dedicated worksheet for an eBay seller.
 echo Analyses auctions and Buy It Now Pokemon-card listings.
+Remembers scanned Item IDs and selects the next unseen batch.
 echo.
 echo Close Pokemon-Auction-Scanner-Dashboard.xlsx before continuing.
 echo Live progress appears below and is saved in:
@@ -36,7 +37,7 @@ if not defined SELLER (
 )
 
 set "SCANCOUNT="
-set /p "SCANCOUNT=Maximum active listings to scan [50]: "
+set /p "SCANCOUNT=Number of NEW unscanned listings to analyse [50]: "
 if not defined SCANCOUNT set "SCANCOUNT=50"
 
 echo.

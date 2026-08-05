@@ -5,6 +5,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from market_links import market_links_for_candidate
+
 from .core import (
     Candidate,
     RadarResult,
@@ -294,13 +296,13 @@ class ExcelAdapter:
             4,
             self._last_row(archive, 1) + 1,
         )
-        row_count = last_row - 4
 
         source_values = self._rows(
-            live.Range(f"A5:AN{last_row}").Value
+            live.Range(f"A5:AR{last_row}").Value
         )
 
         archive_rows = []
+        archive_link_addresses: list[list[str]] = []
         for offset, original in enumerate(source_values):
             if not any(
                 value not in (None, "")
@@ -309,41 +311,75 @@ class ExcelAdapter:
                 continue
 
             row_number = 5 + offset
-            row = list(original[:40])
+            row = list(original[:44])
+            addresses: list[str] = []
 
-            # Preserve the actual URLs rather than only the visible
-            # "Open..." hyperlink labels.
+            # Preserve every link as a real archive hyperlink.
             for zero_index, column_number in (
                 (19, 20),
                 (20, 21),
                 (21, 22),
                 (22, 23),
+                (23, 24),
+                (24, 25),
+                (25, 26),
+                (26, 27),
             ):
+                address = ""
                 try:
                     hyperlink = live.Cells(
                         row_number,
                         column_number,
                     ).Hyperlinks(1)
-                    if hyperlink.Address:
-                        row[zero_index] = hyperlink.Address
+                    address = str(hyperlink.Address or "")
                 except Exception:
                     pass
+                addresses.append(address)
+                if address:
+                    row[zero_index] = address
 
             archive_rows.append(
                 [
                     datetime.now(),
-                    str(row[37] or "ARCHIVED"),
+                    str(row[41] or "ARCHIVED"),
                     *row,
                 ]
             )
+            archive_link_addresses.append(addresses)
+
         if not archive_rows:
             return 0
 
         bottom = target_row + len(archive_rows) - 1
         archive.Range(
             archive.Cells(target_row, 1),
-            archive.Cells(bottom, 42),
+            archive.Cells(bottom, 46),
         ).Value = tuple(tuple(row) for row in archive_rows)
+
+        labels = (
+            "Open Listing",
+            "Open Card Image",
+            "Open Auction Search",
+            "Open Sold Results",
+            "Open UK Market",
+            "Open TCGplayer",
+            "Open Cardmarket",
+            "Open PriceCharting",
+        )
+        for row_offset, addresses in enumerate(archive_link_addresses):
+            archive_row = target_row + row_offset
+            for link_offset, (address, label) in enumerate(
+                zip(addresses, labels)
+            ):
+                if address:
+                    archive.Hyperlinks.Add(
+                        Anchor=archive.Cells(
+                            archive_row,
+                            22 + link_offset,
+                        ),
+                        Address=address,
+                        TextToDisplay=label,
+                    )
         return len(archive_rows)
 
     @staticmethod
@@ -375,6 +411,10 @@ class ExcelAdapter:
             "Open Card Image" if result.candidate.image_url else "",
             "Open Auction Search",
             "Open Sold Results",
+            "Open UK Market",
+            "Open TCGplayer",
+            "Open Cardmarket",
+            "Open PriceCharting",
             result.target_delivered,
             result.maximum_bid,
             result.bid_headroom,
@@ -399,9 +439,9 @@ class ExcelAdapter:
         results: list[RadarResult],
     ) -> None:
         sheet = self.sheet("Live Opportunities")
-        sheet.Range("A5:AN1004").ClearContents()
+        sheet.Range("A5:AR1004").ClearContents()
         try:
-            sheet.Range("T5:W1004").Hyperlinks.Delete()
+            sheet.Range("T5:AA1004").Hyperlinks.Delete()
         except Exception:
             pass
 
@@ -415,7 +455,7 @@ class ExcelAdapter:
         bottom = 4 + len(rows)
         sheet.Range(
             sheet.Cells(5, 1),
-            sheet.Cells(bottom, 40),
+            sheet.Cells(bottom, 44),
         ).Value = tuple(tuple(row) for row in rows)
 
         for offset, result in enumerate(results):
@@ -424,7 +464,7 @@ class ExcelAdapter:
             if result.discovery_source == "↳ SAME SELLER":
                 whole_row = sheet.Range(
                     sheet.Cells(row, 1),
-                    sheet.Cells(row, 40),
+                    sheet.Cells(row, 44),
                 )
                 whole_row.Interior.Color = self._excel_rgb(
                     221,
@@ -443,36 +483,32 @@ class ExcelAdapter:
                 result.decision,
             )
             self._style_flag(
-                sheet.Cells(row, 33),
+                sheet.Cells(row, 37),
                 result.condition_flag,
             )
             self._style_flag(
-                sheet.Cells(row, 34),
+                sheet.Cells(row, 38),
                 result.condition_flag,
             )
-            sheet.Cells(row, 33).HorizontalAlignment = XL_LEFT
+            sheet.Cells(row, 37).HorizontalAlignment = XL_LEFT
 
-            sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 20),
-                Address=result.item_url,
-                TextToDisplay="Open Listing",
-            )
-            if result.candidate.image_url:
-                sheet.Hyperlinks.Add(
-                    Anchor=sheet.Cells(row, 21),
-                    Address=result.candidate.image_url,
-                    TextToDisplay="Open Card Image",
-                )
-            sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 22),
-                Address=result.direct_search_url,
-                TextToDisplay="Open Auction Search",
-            )
-            sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 23),
-                Address=result.sold_search_url,
-                TextToDisplay="Open Sold Results",
-            )
+            links = market_links_for_candidate(result.candidate)
+            for column, address, label in (
+                (20, result.item_url, "Open Listing"),
+                (21, result.candidate.image_url, "Open Card Image"),
+                (22, result.direct_search_url, "Open Auction Search"),
+                (23, result.sold_search_url, "Open Sold Results"),
+                (24, links.uk_market, "Open UK Market"),
+                (25, links.tcgplayer, "Open TCGplayer"),
+                (26, links.cardmarket, "Open Cardmarket"),
+                (27, links.pricecharting, "Open PriceCharting"),
+            ):
+                if address:
+                    sheet.Hyperlinks.Add(
+                        Anchor=sheet.Cells(row, column),
+                        Address=address,
+                        TextToDisplay=label,
+                    )
 
     def append_log(
         self,

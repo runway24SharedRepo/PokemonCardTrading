@@ -228,100 +228,67 @@ def setup_live_sheet(workbook) -> None:
         workbook,
         "Live Opportunities",
     )
-    sheet.Range("A1:AN1004").ClearContents()
-    sheet.Range("A1:AN1004").ClearFormats()
+    sheet.Range("A1:AR1004").ClearContents()
+    sheet.Range("A1:AR1004").ClearFormats()
 
     style_title(
         sheet,
-        40,
+        44,
         "Live Opportunity Radar — UK Pokémon Auctions Ending Soon",
         (
-            "Broad eBay auction radar. The listing, image, active-search and "
-            "sold-comparison links are positioned directly beside Cost / Market "
-            "for faster browsing."
+            "Broad eBay auction radar. Listing, sold-comparable, UK and "
+            "global market-tracker links are grouped beside Cost / Market."
         ),
         0x17365D,
     )
 
     headers = [
-        "Rank",
-        "Decision",
-        "Recommended Action",
-        "Score",
-        "Discovery Source",
-        "Parent Item ID",
-        "Card Match",
-        "Card ID",
-        "Set",
-        "Card Number",
-        "Variant",
-        "Rarity",
-        "Listing Title",
-        "Item ID",
-        "Current Bid (£)",
-        "Postage (£)",
-        "Delivered (£)",
-        "Market (£)",
-        "Cost / Market",
-        "Direct Listing",
-        "Card Image",
-        "Auction Search",
-        "Sold Comparables",
-        "Target Delivered (£)",
-        "Maximum Bid (£)",
-        "Bid Headroom (£)",
-        "Ends At",
-        "Minutes Remaining",
-        "Bid Count",
-        "Seller",
-        "Feedback %",
-        "Feedback Count",
-        "Condition",
-        "Condition Flag",
-        "Condition Details",
-        "Match Confidence",
-        "Matched Card Search",
-        "Status",
-        "Notes",
-        "Last Refreshed",
+        "Rank", "Decision", "Recommended Action", "Score",
+        "Discovery Source", "Parent Item ID", "Card Match", "Card ID",
+        "Set", "Card Number", "Variant", "Rarity", "Listing Title",
+        "Item ID", "Current Bid (£)", "Postage (£)", "Delivered (£)",
+        "Market (£)", "Cost / Market", "Direct Listing", "Card Image",
+        "Auction Search", "Sold Comparables", "UK Market", "TCGplayer",
+        "Cardmarket", "PriceCharting", "Target Delivered (£)",
+        "Maximum Bid (£)", "Bid Headroom (£)", "Ends At",
+        "Minutes Remaining", "Bid Count", "Seller", "Feedback %",
+        "Feedback Count", "Condition", "Condition Flag",
+        "Condition Details", "Match Confidence", "Matched Card Search",
+        "Status", "Notes", "Last Refreshed",
     ]
 
-    sheet.Range("A4:AN4").Value = (tuple(headers),)
+    sheet.Range("A4:AR4").Value = (tuple(headers),)
     style_header(sheet, 4, len(headers), 0x17365D)
-    add_borders(sheet, "A4:AN1004")
+    add_borders(sheet, "A4:AR1004")
 
     widths = {
         "A": 7, "B": 11, "C": 20, "D": 9, "E": 18, "F": 20,
         "G": 40, "H": 17, "I": 24, "J": 12, "K": 21, "L": 18,
         "M": 52, "N": 20, "O": 13, "P": 11, "Q": 13, "R": 12,
-        "S": 13,
-        "T": 17, "U": 17, "V": 19, "W": 20,
-        "X": 17, "Y": 15, "Z": 15,
-        "AA": 18, "AB": 16, "AC": 10, "AD": 18, "AE": 12,
-        "AF": 14, "AG": 30, "AH": 14, "AI": 50, "AJ": 16,
-        "AK": 37, "AL": 12, "AM": 55, "AN": 19,
+        "S": 13, "T": 17, "U": 17, "V": 19, "W": 20,
+        "X": 16, "Y": 16, "Z": 16, "AA": 17,
+        "AB": 17, "AC": 15, "AD": 15, "AE": 18,
+        "AF": 16, "AG": 10, "AH": 18, "AI": 12, "AJ": 14,
+        "AK": 30, "AL": 14, "AM": 50, "AN": 16, "AO": 37,
+        "AP": 12, "AQ": 55, "AR": 19,
     }
     for column, width in widths.items():
         sheet.Columns(column).ColumnWidth = width
 
     sheet.Range("O5:R1004").NumberFormat = '£0.00'
     sheet.Range("S5:S1004").NumberFormat = "0.0%"
-    sheet.Range("X5:Z1004").NumberFormat = '£0.00'
-    sheet.Range("AA5:AA1004").NumberFormat = "yyyy-mm-dd hh:mm"
-    sheet.Range("AE5:AE1004").NumberFormat = "0.0%"
-    sheet.Range("AN5:AN1004").NumberFormat = "yyyy-mm-dd hh:mm"
-    sheet.Range("A5:AN1004").VerticalAlignment = XL_TOP
-    sheet.Range("E5:AN1004").WrapText = True
+    sheet.Range("AB5:AD1004").NumberFormat = '£0.00'
+    sheet.Range("AE5:AE1004").NumberFormat = "yyyy-mm-dd hh:mm"
+    sheet.Range("AI5:AI1004").NumberFormat = "0.0%"
+    sheet.Range("AR5:AR1004").NumberFormat = "yyyy-mm-dd hh:mm"
+    sheet.Range("A5:AR1004").VerticalAlignment = XL_TOP
+    sheet.Range("E5:AR1004").WrapText = True
 
     set_validation(
-        sheet.Range("AL5:AL1004"),
+        sheet.Range("AP5:AP1004"),
         [
-            "NEW",
-            "CHECKED",
-            "WATCH",
-            "BID",
-            "REJECTED",
-            "ENDED",
+            "NEW", "CHECKED", "WATCH", "BID",
+            "REJECTED", "ENDED",
         ],
     )
 
@@ -337,7 +304,7 @@ def setup_live_sheet(workbook) -> None:
     try:
         if sheet.AutoFilterMode:
             sheet.AutoFilterMode = False
-        sheet.Range("A4:AN1004").AutoFilter()
+        sheet.Range("A4:AR1004").AutoFilter()
     except Exception:
         pass
 
@@ -347,12 +314,12 @@ def setup_archive_sheet(workbook) -> None:
         workbook,
         "Opportunity Archive",
     )
-    sheet.Range("A1:AP3").ClearContents()
-    sheet.Range("A1:AP3").ClearFormats()
+    sheet.Range("A1:AT3").ClearContents()
+    sheet.Range("A1:AT3").ClearFormats()
 
     style_title(
         sheet,
-        42,
+        46,
         "Opportunity Archive — Historical Live Radar Results",
         (
             "Previous Live Opportunities are appended here before each "
@@ -367,7 +334,8 @@ def setup_archive_sheet(workbook) -> None:
         "Set", "Card Number", "Variant", "Rarity", "Listing Title",
         "Item ID", "Current Bid (£)", "Postage (£)", "Delivered (£)",
         "Market (£)", "Cost / Market", "Direct Listing", "Card Image",
-        "Auction Search", "Sold Comparables", "Target Delivered (£)",
+        "Auction Search", "Sold Comparables", "UK Market", "TCGplayer",
+        "Cardmarket", "PriceCharting", "Target Delivered (£)",
         "Maximum Bid (£)", "Bid Headroom (£)", "Ends At",
         "Minutes Remaining", "Bid Count", "Seller", "Feedback %",
         "Feedback Count", "Condition", "Condition Flag",
@@ -379,7 +347,7 @@ def setup_archive_sheet(workbook) -> None:
         "Final Status",
         *live_headers,
     ]
-    sheet.Range("A3:AP3").Value = (tuple(headers),)
+    sheet.Range("A3:AT3").Value = (tuple(headers),)
     style_header(sheet, 3, len(headers), 0x5D3617)
 
 

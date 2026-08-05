@@ -238,30 +238,33 @@ def setup_control_sheet(workbook):
         "Card Number", "Variant", "Rarity", "Market Value (£)",
         "Target Delivered (£)", "Market Source", "Price Date",
         "Card Image", "Auction Search", "Buy Now Search",
-        "Sold Comparables", "Queries Run", "Listings Found",
+        "Sold Comparables", "UK Market", "TCGplayer", "Cardmarket",
+        "PriceCharting", "Queries Run", "Listings Found",
         "Best Delivered (£)", "Best Discount", "Best Decision",
         "Best Action", "Last Selected", "Notes",
     ]
-    sheet.Range("A23:X23").Value = (tuple(headers),)
+    sheet.Range("A23:AB23").Value = (tuple(headers),)
     apply_header(sheet, 23, len(headers), 0x5D3617)
-    format_all_borders(sheet, "A23:X273")
+    format_all_borders(sheet, "A23:AB273")
 
     widths = {
         "A": 7, "B": 22, "C": 17, "D": 25, "E": 25, "F": 12,
         "G": 22, "H": 20, "I": 15, "J": 17, "K": 29, "L": 14,
-        "M": 18, "N": 20, "O": 19, "P": 20, "Q": 12, "R": 14,
-        "S": 16, "T": 14, "U": 14, "V": 22, "W": 18, "X": 45,
+        "M": 18, "N": 20, "O": 19, "P": 20,
+        "Q": 16, "R": 16, "S": 16, "T": 17,
+        "U": 12, "V": 14, "W": 16, "X": 14,
+        "Y": 14, "Z": 22, "AA": 18, "AB": 45,
     }
     for column, width in widths.items():
         sheet.Columns(column).ColumnWidth = width
 
     sheet.Range("I24:J273").NumberFormat = '£0.00'
-    sheet.Range("S24:S273").NumberFormat = '£0.00'
-    sheet.Range("T24:T273").NumberFormat = "0.0%"
+    sheet.Range("W24:W273").NumberFormat = '£0.00'
+    sheet.Range("X24:X273").NumberFormat = "0.0%"
     sheet.Range("L24:L273").NumberFormat = "yyyy-mm-dd"
-    sheet.Range("W24:W273").NumberFormat = "yyyy-mm-dd hh:mm"
-    sheet.Range("A24:X273").VerticalAlignment = XL_TOP
-    sheet.Range("B24:X273").WrapText = True
+    sheet.Range("AA24:AA273").NumberFormat = "yyyy-mm-dd hh:mm"
+    sheet.Range("A24:AB273").VerticalAlignment = XL_TOP
+    sheet.Range("B24:AB273").WrapText = True
 
     try:
         sheet.Activate()
@@ -273,7 +276,7 @@ def setup_control_sheet(workbook):
         pass
 
     try:
-        sheet.Range("A23:X273").AutoFilter()
+        sheet.Range("A23:AB273").AutoFilter()
     except Exception:
         pass
 
@@ -289,10 +292,10 @@ def _setup_result_or_queue_sheet(
     if created:
         sheet.Cells.Clear()
     else:
-        sheet.Range("A1:AT1504").ClearContents()
-        sheet.Range("A1:AT1504").ClearFormats()
+        sheet.Range("A1:AX1504").ClearContents()
+        sheet.Range("A1:AX1504").ClearFormats()
 
-    apply_title(sheet, 46, title, description, fill)
+    apply_title(sheet, 50, title, description, fill)
 
     headers = [
         "Rank", "Decision", "Recommended Action", "Score", "Listing Type",
@@ -302,7 +305,8 @@ def _setup_result_or_queue_sheet(
         "Bid Delivered (£)", "Buy Now Delivered (£)", "Market (£)",
         "Bid / Market", "Buy Now / Market",
         "Direct Listing", "Card Image", "Auction Search",
-        "Buy Now Search", "Sold Comparables",
+        "Buy Now Search", "Sold Comparables", "UK Market", "TCGplayer",
+        "Cardmarket", "PriceCharting",
         "Target Delivered (£)", "Maximum Bid (£)", "Bid Headroom (£)",
         "Buy Now Headroom (£)", "Bid Decision", "Buy Now Decision",
         "Ends At", "Minutes Remaining", "Bid Count", "Seller",
@@ -310,9 +314,9 @@ def _setup_result_or_queue_sheet(
         "Condition Details", "Match Confidence", "Search Query",
         "Status", "Notes",
     ]
-    sheet.Range("A4:AT4").Value = (tuple(headers),)
+    sheet.Range("A4:AX4").Value = (tuple(headers),)
     apply_header(sheet, 4, len(headers), fill)
-    format_all_borders(sheet, "A4:AT1504")
+    format_all_borders(sheet, "A4:AX1504")
 
     widths = {
         "A": 7, "B": 11, "C": 23, "D": 9, "E": 22, "F": 18,
@@ -320,23 +324,24 @@ def _setup_result_or_queue_sheet(
         "M": 50, "N": 20, "O": 13, "P": 14, "Q": 11, "R": 15,
         "S": 17, "T": 12, "U": 13, "V": 15,
         "W": 17, "X": 17, "Y": 19, "Z": 19, "AA": 20,
-        "AB": 17, "AC": 15, "AD": 15, "AE": 18,
-        "AF": 13, "AG": 15, "AH": 18, "AI": 16, "AJ": 10,
-        "AK": 18, "AL": 12, "AM": 14, "AN": 28, "AO": 14,
-        "AP": 48, "AQ": 16, "AR": 35, "AS": 12, "AT": 52,
+        "AB": 16, "AC": 16, "AD": 16, "AE": 17,
+        "AF": 17, "AG": 15, "AH": 15, "AI": 18,
+        "AJ": 13, "AK": 15, "AL": 18, "AM": 16, "AN": 10,
+        "AO": 18, "AP": 12, "AQ": 14, "AR": 28, "AS": 14,
+        "AT": 48, "AU": 16, "AV": 35, "AW": 12, "AX": 52,
     }
     for column, width in widths.items():
         sheet.Columns(column).ColumnWidth = width
 
     sheet.Range("O5:T1504").NumberFormat = '£0.00'
     sheet.Range("U5:V1504").NumberFormat = "0.0%"
-    sheet.Range("AB5:AE1504").NumberFormat = '£0.00'
-    sheet.Range("AH5:AH1504").NumberFormat = "yyyy-mm-dd hh:mm"
-    sheet.Range("AL5:AL1504").NumberFormat = "0.0%"
-    sheet.Range("A5:AT1504").VerticalAlignment = XL_TOP
-    sheet.Range("F5:AT1504").WrapText = True
+    sheet.Range("AF5:AI1504").NumberFormat = '£0.00'
+    sheet.Range("AL5:AL1504").NumberFormat = "yyyy-mm-dd hh:mm"
+    sheet.Range("AP5:AP1504").NumberFormat = "0.0%"
+    sheet.Range("A5:AX1504").VerticalAlignment = XL_TOP
+    sheet.Range("F5:AX1504").WrapText = True
 
-    set_validation(sheet.Range("AS5:AS1504"), [
+    set_validation(sheet.Range("AW5:AW1504"), [
         "NEW", "CHECKED", "WATCH", "BID", "BUY NOW",
         "REJECTED", "ENDED",
     ])
@@ -353,7 +358,7 @@ def _setup_result_or_queue_sheet(
     try:
         if sheet.AutoFilterMode:
             sheet.AutoFilterMode = False
-        sheet.Range("A4:AT1504").AutoFilter()
+        sheet.Range("A4:AX1504").AutoFilter()
     except Exception:
         pass
 
@@ -392,7 +397,7 @@ def setup_history_sheet(workbook):
 
     apply_title(
         sheet,
-        23,
+        27,
         "Random Snipe History — Rotation and Performance",
         (
             "Append-only history used for repeat avoidance, never-scanned "
@@ -407,16 +412,18 @@ def setup_history_sheet(workbook):
         "Minimum (£)", "Maximum (£)", "Search Depth", "Queries Run",
         "Listings Found", "GREEN", "AMBER", "RED", "Best Delivered (£)",
         "Best Discount", "Outcome", "Active Search", "Sold Comparables",
+        "UK Market", "TCGplayer", "Cardmarket", "PriceCharting",
     ]
-    sheet.Range("A4:W4").Value = (tuple(headers),)
+    sheet.Range("A4:AA4").Value = (tuple(headers),)
     apply_header(sheet, 4, len(headers), 0x17365D)
-    format_all_borders(sheet, "A4:W50004")
+    format_all_borders(sheet, "A4:AA50004")
 
     widths = {
         "A": 25, "B": 19, "C": 13, "D": 17, "E": 24, "F": 24,
         "G": 12, "H": 22, "I": 12, "J": 24, "K": 12, "L": 12,
         "M": 14, "N": 12, "O": 14, "P": 10, "Q": 10, "R": 10,
         "S": 16, "T": 14, "U": 22, "V": 19, "W": 20,
+        "X": 16, "Y": 16, "Z": 16, "AA": 17,
     }
     for column, width in widths.items():
         sheet.Columns(column).ColumnWidth = width
@@ -426,8 +433,8 @@ def setup_history_sheet(workbook):
     sheet.Range("K5:L50004").NumberFormat = '£0.00'
     sheet.Range("S5:S50004").NumberFormat = '£0.00'
     sheet.Range("T5:T50004").NumberFormat = "0.0%"
-    sheet.Range("A5:W50004").VerticalAlignment = XL_TOP
-    sheet.Range("D5:W50004").WrapText = True
+    sheet.Range("A5:AA50004").VerticalAlignment = XL_TOP
+    sheet.Range("D5:AA50004").WrapText = True
 
     try:
         sheet.Activate()
@@ -438,7 +445,7 @@ def setup_history_sheet(workbook):
         pass
 
     try:
-        sheet.Range("A4:W50004").AutoFilter()
+        sheet.Range("A4:AA50004").AutoFilter()
     except Exception:
         pass
 

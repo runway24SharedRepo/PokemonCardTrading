@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .core import Candidate, ListingResult, Settings
+from market_links import market_links_for_candidate
 from .core import (
     parse_cooldown_days,
     parse_currency_or_any,
@@ -399,9 +400,9 @@ class ExcelAdapter:
 
     def clear_selected_rows(self) -> None:
         sheet = self.sheet("Random Range Sniper")
-        sheet.Range("A24:V273").ClearContents()
+        sheet.Range("A24:AB273").ClearContents()
         try:
-            sheet.Range("M24:O273").Hyperlinks.Delete()
+            sheet.Range("M24:T273").Hyperlinks.Delete()
         except Exception:
             pass
 
@@ -410,9 +411,9 @@ class ExcelAdapter:
         attempts: list[dict[str, Any]],
     ) -> None:
         sheet = self.sheet("Random Range Sniper")
-        sheet.Range("A24:W273").ClearContents()
+        sheet.Range("A24:AB273").ClearContents()
         try:
-            sheet.Range("M24:P273").Hyperlinks.Delete()
+            sheet.Range("M24:T273").Hyperlinks.Delete()
         except Exception:
             pass
 
@@ -429,6 +430,7 @@ class ExcelAdapter:
             )
             best_decision = best.decision if best else ""
             best_action = best.recommended_action if best else ""
+            links = market_links_for_candidate(candidate)
             rows.append(
                 [
                     index,
@@ -447,6 +449,10 @@ class ExcelAdapter:
                     "Open Auction Search",
                     "Open Buy Now Search",
                     "Open Sold Results",
+                    "Open UK Market",
+                    "Open TCGplayer",
+                    "Open Cardmarket",
+                    "Open PriceCharting",
                     int(attempt.get("queries_run", 0)),
                     result_count,
                     best_delivered,
@@ -462,12 +468,13 @@ class ExcelAdapter:
             bottom = 23 + len(rows)
             sheet.Range(
                 sheet.Cells(24, 1),
-                sheet.Cells(bottom, 24),
+                sheet.Cells(bottom, 28),
             ).Value = tuple(tuple(row) for row in rows)
 
             for offset, attempt in enumerate(attempts):
                 row = 24 + offset
                 candidate: Candidate = attempt["candidate"]
+                links = market_links_for_candidate(candidate)
                 if candidate.image_url:
                     sheet.Hyperlinks.Add(
                         Anchor=sheet.Cells(row, 13),
@@ -489,9 +496,20 @@ class ExcelAdapter:
                     Address=attempt["sold_search_url"],
                     TextToDisplay="Open Sold Results",
                 )
+                for column, address, label in (
+                    (17, links.uk_market, "Open UK Market"),
+                    (18, links.tcgplayer, "Open TCGplayer"),
+                    (19, links.cardmarket, "Open Cardmarket"),
+                    (20, links.pricecharting, "Open PriceCharting"),
+                ):
+                    sheet.Hyperlinks.Add(
+                        Anchor=sheet.Cells(row, column),
+                        Address=address,
+                        TextToDisplay=label,
+                    )
                 if best := attempt.get("best_result"):
                     self._style_decision_cell(
-                        sheet.Cells(row, 21),
+                        sheet.Cells(row, 25),
                         best.decision,
                     )
 
@@ -531,6 +549,10 @@ class ExcelAdapter:
             "Open Auction Search",
             "Open Buy Now Search",
             "Open Sold Results",
+            "Open UK Market",
+            "Open TCGplayer",
+            "Open Cardmarket",
+            "Open PriceCharting",
             result.target_delivered,
             result.maximum_bid,
             result.bid_headroom,
@@ -558,9 +580,9 @@ class ExcelAdapter:
         results: list[ListingResult],
     ) -> None:
         sheet = self.sheet(sheet_name)
-        sheet.Range("A5:AT1504").ClearContents()
+        sheet.Range("A5:AX1504").ClearContents()
         try:
-            sheet.Range("W5:AA1504").Hyperlinks.Delete()
+            sheet.Range("W5:AE1504").Hyperlinks.Delete()
         except Exception:
             pass
 
@@ -574,7 +596,7 @@ class ExcelAdapter:
         bottom = 4 + len(rows)
         sheet.Range(
             sheet.Cells(5, 1),
-            sheet.Cells(bottom, 46),
+            sheet.Cells(bottom, 50),
         ).Value = tuple(tuple(row) for row in rows)
 
         for offset, result in enumerate(results):
@@ -584,7 +606,7 @@ class ExcelAdapter:
                 self._style_seller_discovery_row(
                     sheet,
                     row,
-                    46,
+                    50,
                 )
 
             self._style_decision_cell(
@@ -592,47 +614,40 @@ class ExcelAdapter:
                 result.decision,
             )
             self._style_decision_cell(
-                sheet.Cells(row, 32),
+                sheet.Cells(row, 36),
                 result.bid_decision,
             )
             self._style_decision_cell(
-                sheet.Cells(row, 33),
+                sheet.Cells(row, 37),
                 result.buy_now_decision,
             )
             self._style_condition_cells(
                 sheet,
                 row,
-                condition_column=40,
-                flag_column=41,
+                condition_column=44,
+                flag_column=45,
                 flag=result.condition_flag,
             )
 
-            sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 23),
-                Address=result.item_url,
-                TextToDisplay="Open Listing",
+            links = market_links_for_candidate(result.candidate)
+            hyperlink_values = (
+                (23, result.item_url, "Open Listing"),
+                (24, result.candidate.image_url, "Open Card Image"),
+                (25, result.auction_search_url, "Open Auction Search"),
+                (26, result.buy_now_search_url, "Open Buy Now Search"),
+                (27, result.sold_search_url, "Open Sold Results"),
+                (28, links.uk_market, "Open UK Market"),
+                (29, links.tcgplayer, "Open TCGplayer"),
+                (30, links.cardmarket, "Open Cardmarket"),
+                (31, links.pricecharting, "Open PriceCharting"),
             )
-            if result.candidate.image_url:
-                sheet.Hyperlinks.Add(
-                    Anchor=sheet.Cells(row, 24),
-                    Address=result.candidate.image_url,
-                    TextToDisplay="Open Card Image",
-                )
-            sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 25),
-                Address=result.auction_search_url,
-                TextToDisplay="Open Auction Search",
-            )
-            sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 26),
-                Address=result.buy_now_search_url,
-                TextToDisplay="Open Buy Now Search",
-            )
-            sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 27),
-                Address=result.sold_search_url,
-                TextToDisplay="Open Sold Results",
-            )
+            for column, address, label in hyperlink_values:
+                if address:
+                    sheet.Hyperlinks.Add(
+                        Anchor=sheet.Cells(row, column),
+                        Address=address,
+                        TextToDisplay=label,
+                    )
 
     def write_results(self, results: list[ListingResult]) -> None:
         self._write_result_sheet("Random Snipe Results", results)
@@ -688,8 +703,12 @@ class ExcelAdapter:
                     best.delivered if best else None,
                     (1 - best.ratio) if best else None,
                     attempt.get("status", ""),
-                    attempt["active_search_url"],
-                    attempt["sold_search_url"],
+                    "Open Active Search",
+                    "Open Sold Results",
+                    "Open UK Market",
+                    "Open TCGplayer",
+                    "Open Cardmarket",
+                    "Open PriceCharting",
                 ]
             )
 
@@ -697,21 +716,26 @@ class ExcelAdapter:
             bottom = start_row + len(rows) - 1
             sheet.Range(
                 sheet.Cells(start_row, 1),
-                sheet.Cells(bottom, 23),
+                sheet.Cells(bottom, 27),
             ).Value = tuple(tuple(row) for row in rows)
 
             for offset, attempt in enumerate(attempts):
                 row = start_row + offset
-                sheet.Hyperlinks.Add(
-                    Anchor=sheet.Cells(row, 22),
-                    Address=attempt["active_search_url"],
-                    TextToDisplay="Open Active Search",
-                )
-                sheet.Hyperlinks.Add(
-                    Anchor=sheet.Cells(row, 23),
-                    Address=attempt["sold_search_url"],
-                    TextToDisplay="Open Sold Results",
-                )
+                candidate: Candidate = attempt["candidate"]
+                links = market_links_for_candidate(candidate)
+                for column, address, label in (
+                    (22, attempt["active_search_url"], "Open Active Search"),
+                    (23, attempt["sold_search_url"], "Open Sold Results"),
+                    (24, links.uk_market, "Open UK Market"),
+                    (25, links.tcgplayer, "Open TCGplayer"),
+                    (26, links.cardmarket, "Open Cardmarket"),
+                    (27, links.pricecharting, "Open PriceCharting"),
+                ):
+                    sheet.Hyperlinks.Add(
+                        Anchor=sheet.Cells(row, column),
+                        Address=address,
+                        TextToDisplay=label,
+                    )
 
     def update_kpis(
         self,
@@ -766,9 +790,9 @@ class ExcelAdapter:
             return 0
 
         sheet = self.sheet("Snipe Queue")
-        sheet.Range("A5:AA505").ClearContents()
+        sheet.Range("A5:AD505").ClearContents()
         try:
-            sheet.Range("X5:Y505").Hyperlinks.Delete()
+            sheet.Range("X5:AD505").Hyperlinks.Delete()
         except Exception:
             pass
 
@@ -811,19 +835,24 @@ class ExcelAdapter:
                         if result.candidate.image_url
                         else ""
                     ),
+                    "Open Sold Results",
+                    "Open UK Market",
+                    "Open TCGplayer",
+                    "Open Cardmarket",
+                    "Open PriceCharting",
                 ]
             )
 
         bottom = 4 + len(rows)
         sheet.Range(
             sheet.Cells(5, 1),
-            sheet.Cells(bottom, 25),
+            sheet.Cells(bottom, 30),
         ).Value = tuple(tuple(row) for row in rows)
 
         for offset, result in enumerate(green[:500]):
             row = 5 + offset
             if result.discovery_source == "↳ SAME SELLER":
-                self._style_seller_discovery_row(sheet, row, 25)
+                self._style_seller_discovery_row(sheet, row, 30)
             self._style_decision_cell(sheet.Cells(row, 2), "GREEN")
             self._style_decision_cell(
                 sheet.Cells(row, 21),
@@ -834,16 +863,20 @@ class ExcelAdapter:
                 ),
             )
             sheet.Cells(row, 21).HorizontalAlignment = -4131
-            sheet.Hyperlinks.Add(
-                Anchor=sheet.Cells(row, 24),
-                Address=result.item_url,
-                TextToDisplay="Open Listing",
-            )
-            if result.candidate.image_url:
-                sheet.Hyperlinks.Add(
-                    Anchor=sheet.Cells(row, 25),
-                    Address=result.candidate.image_url,
-                    TextToDisplay="Open Card Image",
-                )
+            links = market_links_for_candidate(result.candidate)
+            for column, address, label in (
+                (24, result.item_url, "Open Listing"),
+                (25, result.candidate.image_url, "Open Card Image"),
+                (26, result.sold_search_url, "Open Sold Results"),
+                (27, links.uk_market, "Open UK Market"),
+                (28, links.tcgplayer, "Open TCGplayer"),
+                (29, links.cardmarket, "Open Cardmarket"),
+                (30, links.pricecharting, "Open PriceCharting"),
+            ):
+                if address:
+                    sheet.Hyperlinks.Add(
+                        Anchor=sheet.Cells(row, column),
+                        Address=address,
+                        TextToDisplay=label,
+                    )
         return len(rows)
-
