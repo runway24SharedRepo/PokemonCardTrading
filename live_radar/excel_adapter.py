@@ -6,6 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from market_links import market_links_for_candidate
+from long_term_excel import LongTermWorkbookManager
+from long_term_investment import assessment_values
+
+from edition_safety import (
+    preferred_result_image,
+    safe_reference_image_url,
+)
 
 from .core import (
     Candidate,
@@ -37,6 +44,7 @@ class ExcelAdapter:
         self.book = self.excel.Workbooks.Open(
             str(workbook_path.resolve())
         )
+        self.long_term = LongTermWorkbookManager(self.book)
 
     def close(self, save: bool = True) -> None:
         try:
@@ -220,6 +228,7 @@ class ExcelAdapter:
                     supertype=str(
                         details.get("supertype", "") or ""
                     ),
+                    release_date=details.get("release_date"),
                     image_url=str(
                         details.get("image_url", "") or ""
                     ),
@@ -256,7 +265,12 @@ class ExcelAdapter:
                 "card_id": str(row[0] or "").strip(),
                 "rarity": str(row[7] or "").strip(),
                 "supertype": str(row[8] or "").strip(),
-                "image_url": str(row[29] or "").strip(),
+                "release_date": row[13],
+                "image_url": safe_reference_image_url(
+                    row[29],
+                    row[21],
+                    row[22],
+                ),
             }
 
         return output
@@ -285,6 +299,40 @@ class ExcelAdapter:
         cell.Font.Bold = True
         cell.HorizontalAlignment = XL_CENTER
 
+    def _style_investment_cells(
+        self,
+        sheet,
+        row: int,
+        score_column: int,
+        tier_column: int,
+        action_column: int,
+        score: int,
+    ) -> None:
+        score = int(score or 0)
+        if score >= 90:
+            fill, font = (84, 130, 53), (255, 255, 255)
+        elif score >= 80:
+            fill, font = (198, 239, 206), (0, 97, 0)
+        elif score >= 70:
+            fill, font = (226, 239, 218), (55, 86, 35)
+        elif score >= 60:
+            fill, font = (255, 235, 156), (156, 101, 0)
+        else:
+            fill, font = (255, 199, 206), (156, 0, 6)
+        for column in (score_column, tier_column):
+            cell = sheet.Cells(row, column)
+            cell.Interior.Color = self._excel_rgb(*fill)
+            cell.Font.Color = self._excel_rgb(*font)
+            cell.Font.Bold = True
+            cell.HorizontalAlignment = XL_CENTER
+        sheet.Cells(row, action_column).WrapText = True
+
+    def assess_results(self, results) -> None:
+        self.long_term.assess_results(results)
+
+    def update_long_term_records(self, mode: str, results, candidates) -> dict[str, int]:
+        return self.long_term.update_after_scan(mode, results, candidates)
+
     def archive_current_live_results(self) -> int:
         live = self.sheet("Live Opportunities")
         last_row = self._last_row(live, 1)
@@ -298,7 +346,7 @@ class ExcelAdapter:
         )
 
         source_values = self._rows(
-            live.Range(f"A5:AR{last_row}").Value
+            live.Range(f"A5:BG{last_row}").Value
         )
 
         archive_rows = []
@@ -311,7 +359,7 @@ class ExcelAdapter:
                 continue
 
             row_number = 5 + offset
-            row = list(original[:44])
+            row = list(original[:59])
             addresses: list[str] = []
 
             # Preserve every link as a real archive hyperlink.
@@ -341,7 +389,7 @@ class ExcelAdapter:
             archive_rows.append(
                 [
                     datetime.now(),
-                    str(row[41] or "ARCHIVED"),
+                    str(row[56] or "ARCHIVED"),
                     *row,
                 ]
             )
@@ -353,7 +401,7 @@ class ExcelAdapter:
         bottom = target_row + len(archive_rows) - 1
         archive.Range(
             archive.Cells(target_row, 1),
-            archive.Cells(bottom, 46),
+            archive.Cells(bottom, 61),
         ).Value = tuple(tuple(row) for row in archive_rows)
 
         labels = (
@@ -387,6 +435,9 @@ class ExcelAdapter:
         rank: int,
         result: RadarResult,
     ) -> list[Any]:
+        listing_image_url = str(
+            getattr(result, "listing_image_url", "") or ""
+        ).strip()
         return [
             rank,
             result.decision,
@@ -408,13 +459,22 @@ class ExcelAdapter:
             result.market_value,
             result.ratio,
             "Open Listing",
-            "Open Card Image" if result.candidate.image_url else "",
+            (
+                "Open Listing Image"
+                if listing_image_url
+                else (
+                    "Open Card Image"
+                    if result.candidate.image_url
+                    else ""
+                )
+            ),
             "Open Auction Search",
             "Open Sold Results",
             "Open UK Market",
             "Open TCGplayer",
             "Open Cardmarket",
             "Open PriceCharting",
+            *assessment_values(result),
             result.target_delivered,
             result.maximum_bid,
             result.bid_headroom,
@@ -439,7 +499,7 @@ class ExcelAdapter:
         results: list[RadarResult],
     ) -> None:
         sheet = self.sheet("Live Opportunities")
-        sheet.Range("A5:AR1004").ClearContents()
+        sheet.Range("A5:BG1004").ClearContents()
         try:
             sheet.Range("T5:AA1004").Hyperlinks.Delete()
         except Exception:
@@ -455,7 +515,7 @@ class ExcelAdapter:
         bottom = 4 + len(rows)
         sheet.Range(
             sheet.Cells(5, 1),
-            sheet.Cells(bottom, 44),
+            sheet.Cells(bottom, 59),
         ).Value = tuple(tuple(row) for row in rows)
 
         for offset, result in enumerate(results):
@@ -464,7 +524,7 @@ class ExcelAdapter:
             if result.discovery_source == "↳ SAME SELLER":
                 whole_row = sheet.Range(
                     sheet.Cells(row, 1),
-                    sheet.Cells(row, 44),
+                    sheet.Cells(row, 59),
                 )
                 whole_row.Interior.Color = self._excel_rgb(
                     221,
@@ -483,19 +543,38 @@ class ExcelAdapter:
                 result.decision,
             )
             self._style_flag(
-                sheet.Cells(row, 37),
+                sheet.Cells(row, 52),
                 result.condition_flag,
             )
             self._style_flag(
-                sheet.Cells(row, 38),
+                sheet.Cells(row, 53),
                 result.condition_flag,
             )
-            sheet.Cells(row, 37).HorizontalAlignment = XL_LEFT
+            sheet.Cells(row, 52).HorizontalAlignment = XL_LEFT
+            self._style_investment_cells(
+                sheet,
+                row,
+                28,
+                29,
+                30,
+                result.long_term_score,
+            )
 
             links = market_links_for_candidate(result.candidate)
             for column, address, label in (
                 (20, result.item_url, "Open Listing"),
-                (21, result.candidate.image_url, "Open Card Image"),
+                (
+                    21,
+                    preferred_result_image(
+                        getattr(result, "listing_image_url", ""),
+                        result.candidate.image_url,
+                    ),
+                    (
+                        "Open Listing Image"
+                        if getattr(result, "listing_image_url", "")
+                        else "Open Card Image"
+                    ),
+                ),
                 (22, result.direct_search_url, "Open Auction Search"),
                 (23, result.sold_search_url, "Open Sold Results"),
                 (24, links.uk_market, "Open UK Market"),

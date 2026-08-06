@@ -69,8 +69,19 @@ def build_price_variants(
 
     selected: dict[str, PriceVariant] = {}
 
-    # Cardmarket is preferred for Normal and Reverse Holo because the user's
-    # market is the UK and Cardmarket is Europe-oriented.
+    tcgplayer = card.get("tcgplayer") or {}
+    tcg_prices = tcgplayer.get("prices") or {}
+    tcg_url = str(tcgplayer.get("url", "")).strip()
+    tcg_date = str(tcgplayer.get("updatedAt", "")).strip()
+
+    edition_sensitive = any(
+        key in tcg_prices
+        for key in (
+            "1stEditionNormal",
+            "1stEditionHolofoil",
+        )
+    )
+
     cardmarket = card.get("cardmarket") or {}
     cardmarket_prices = cardmarket.get("prices") or {}
     cardmarket_url = str(cardmarket.get("url", "")).strip()
@@ -80,7 +91,7 @@ def build_price_variants(
         cardmarket_prices,
         config["cardmarket_normal_price_priority"],
     )
-    if normal_value is not None:
+    if normal_value is not None and not edition_sensitive:
         selected["Normal"] = PriceVariant(
             card_id=card_id,
             card_name=card_name,
@@ -88,7 +99,10 @@ def build_price_variants(
             set_name=set_name,
             card_number=number,
             variant="Normal",
-            price_gbp=round(normal_value * fx.eur_to_gbp, 2),
+            price_gbp=round(
+                normal_value * fx.eur_to_gbp,
+                2,
+            ),
             source="Pokémon TCG API / Cardmarket",
             source_date=cardmarket_date,
             source_url=cardmarket_url,
@@ -109,7 +123,10 @@ def build_price_variants(
             set_name=set_name,
             card_number=number,
             variant="Reverse Holofoil",
-            price_gbp=round(reverse_value * fx.eur_to_gbp, 2),
+            price_gbp=round(
+                reverse_value * fx.eur_to_gbp,
+                2,
+            ),
             source="Pokémon TCG API / Cardmarket",
             source_date=cardmarket_date,
             source_url=cardmarket_url,
@@ -118,20 +135,26 @@ def build_price_variants(
             source_field=reverse_field,
         )
 
-    # TCGplayer fills variant gaps and supplies foil/first-edition variants.
-    tcgplayer = card.get("tcgplayer") or {}
-    tcg_prices = tcgplayer.get("prices") or {}
-    tcg_url = str(tcgplayer.get("url", "")).strip()
-    tcg_date = str(tcgplayer.get("updatedAt", "")).strip()
-
     for api_variant, values in tcg_prices.items():
-        display_variant = TCG_VARIANT_NAMES.get(api_variant, api_variant)
+        display_variant = TCG_VARIANT_NAMES.get(
+            api_variant,
+            api_variant,
+        )
         value, field = first_number(
             values or {},
             config["tcgplayer_price_priority"],
         )
         if value is None:
             continue
+
+        source = "Pokémon TCG API / TCGplayer"
+        if edition_sensitive and display_variant in {
+            "Normal",
+            "Holofoil",
+            "1st Edition Normal",
+            "1st Edition Holofoil",
+        }:
+            source += " (edition-specific)"
 
         candidate = PriceVariant(
             card_id=card_id,
@@ -140,8 +163,11 @@ def build_price_variants(
             set_name=set_name,
             card_number=number,
             variant=display_variant,
-            price_gbp=round(value * fx.usd_to_gbp, 2),
-            source="Pokémon TCG API / TCGplayer",
+            price_gbp=round(
+                value * fx.usd_to_gbp,
+                2,
+            ),
+            source=source,
             source_date=tcg_date,
             source_url=tcg_url,
             original_price=value,
@@ -149,13 +175,31 @@ def build_price_variants(
             source_field=field,
         )
 
-        # Keep Cardmarket for Normal and Reverse Holo; use TCGplayer otherwise.
-        if display_variant not in selected:
+        if (
+            edition_sensitive
+            and display_variant in {
+                "Normal",
+                "Holofoil",
+            }
+        ):
             selected[display_variant] = candidate
+        elif display_variant not in selected:
+            selected[display_variant] = candidate
+
+    # Never use a broad Cardmarket trend to manufacture a standard price when
+    # a separate First Edition exists but TCGplayer has no standard value.
+    if edition_sensitive:
+        if "normal" not in tcg_prices:
+            selected.pop("Normal", None)
+        if "holofoil" not in tcg_prices:
+            selected.pop("Holofoil", None)
 
     return sorted(
         selected.values(),
-        key=lambda item: (item.variant.casefold(), item.card_id.casefold()),
+        key=lambda item: (
+            item.variant.casefold(),
+            item.card_id.casefold(),
+        ),
     )
 
 

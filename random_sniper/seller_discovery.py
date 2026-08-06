@@ -22,7 +22,17 @@ class CandidateTitleMatcher:
         for candidate in candidates:
             tokens = meaningful_tokens(candidate.name)
             for token in set(tokens):
-                if len(token) >= 3:
+                if (
+                    len(token) >= 2
+                    and token not in {
+                        "ex",
+                        "gx",
+                        "vmax",
+                        "vstar",
+                        "break",
+                        "prime",
+                    }
+                ):
                     self._token_index[token].append(candidate)
 
     def match(
@@ -35,24 +45,91 @@ class CandidateTitleMatcher:
 
         candidate_pool: dict[str, Candidate] = {}
         for token in title_tokens:
-            for candidate in self._token_index.get(token, []):
-                candidate_pool[candidate.identity] = candidate
+            for candidate in self._token_index.get(
+                token,
+                [],
+            ):
+                candidate_pool[
+                    candidate.identity
+                ] = candidate
 
-        best_candidate: Candidate | None = None
-        best_score = 0.0
+        scored: list[
+            tuple[float, float, Candidate]
+        ] = []
 
         for candidate in candidate_pool.values():
-            # Seller discovery must be stricter than an ordinary known-card
-            # search. Exact card-number evidence is required.
-            if card_number_match(title, candidate.number) < 0.75:
+            score, _ = listing_match_score(
+                candidate,
+                title,
+                exclusions,
+            )
+            if score < 0.72:
                 continue
 
-            score, _ = listing_match_score(candidate, title, exclusions)
-            if score > best_score:
-                best_score = score
-                best_candidate = candidate
+            set_tokens = meaningful_tokens(
+                candidate.set_name
+            )
+            set_score = (
+                sum(
+                    token in title_tokens
+                    for token in set_tokens
+                )
+                / len(set_tokens)
+                if set_tokens
+                else 0.0
+            )
+            scored.append(
+                (
+                    score,
+                    set_score,
+                    candidate,
+                )
+            )
 
-        return best_candidate if best_score >= 0.72 else None
+        if not scored:
+            return None
+
+        scored.sort(
+            key=lambda value: (
+                value[0],
+                value[1],
+                value[2].market_value,
+            ),
+            reverse=True,
+        )
+        best_score, best_set_score, best = (
+            scored[0]
+        )
+
+        if len(scored) > 1:
+            (
+                second_score,
+                second_set_score,
+                second,
+            ) = scored[1]
+
+            same_exact_identity = (
+                best.identity == second.identity
+            )
+            clear_set_advantage = (
+                best_set_score >= 0.75
+                and best_set_score
+                - second_set_score >= 0.35
+            )
+            clear_score_advantage = (
+                best_score - second_score >= 0.055
+            )
+
+            if (
+                not same_exact_identity
+                and not clear_set_advantage
+                and not clear_score_advantage
+            ):
+                # It is safer to discard a listing than assign the market
+                # value of a different set or variant.
+                return None
+
+        return best
 
 
 def group_queue_results(

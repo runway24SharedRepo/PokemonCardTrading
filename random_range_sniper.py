@@ -558,6 +558,17 @@ def main() -> int:
             root / "data" / "random-range-sniper.sqlite",
         )
 
+        # eBay search can return loosely related cards. Validate each returned
+        # title against the complete database before assigning the selected
+        # card's market value.
+        primary_identity_matcher = CandidateTitleMatcher(
+            candidates
+        )
+        eligible_identity_set = {
+            value.identity
+            for value in eligible
+        }
+
         desired_successful_cards = settings.number_of_cards
         successful_cards = 0
         total_attempt_limit = min(
@@ -612,8 +623,24 @@ def main() -> int:
                         continue
                     seen_items.add(item_id)
 
+                    detected_candidate = (
+                        primary_identity_matcher.match(
+                            str(
+                                item.get("title", "")
+                                or ""
+                            ),
+                            exclusions,
+                        )
+                    )
+                    if (
+                        detected_candidate is None
+                        or detected_candidate.identity
+                        != candidate.identity
+                    ):
+                        continue
+
                     evaluated = evaluate_item(
-                        candidate,
+                        detected_candidate,
                         item,
                         query,
                         settings,
@@ -685,6 +712,10 @@ def main() -> int:
                 sum(item.within_sniping_window for item in card_results),
             )
 
+        # Assess every matched listing before deduplication so selected-card
+        # history also receives the long-term rating.
+        excel.assess_results(all_results)
+
         # Deduplicate identical eBay items found through different cards/queries,
         # keeping the highest-scoring match.
         result_by_item: dict[str, ListingResult] = {}
@@ -699,6 +730,7 @@ def main() -> int:
                 not item.queue_eligible,
                 item.decision != "GREEN",
                 item.decision == "RED",
+                -item.long_term_score,
                 -item.score,
                 item.minutes_remaining,
             ),
@@ -706,7 +738,7 @@ def main() -> int:
 
         seller_results: list[ListingResult] = []
         if settings.expand_green_sellers:
-            matcher = CandidateTitleMatcher(eligible)
+            matcher = CandidateTitleMatcher(candidates)
             seller_exclusions = [
                 *exclusions,
                 *config.get("seller_discovery_exclusions", []),
@@ -764,7 +796,11 @@ def main() -> int:
                         str(item.get("title", "") or ""),
                         seller_exclusions,
                     )
-                    if candidate is None:
+                    if (
+                        candidate is None
+                        or candidate.identity
+                        not in eligible_identity_set
+                    ):
                         continue
 
                     exact_query = build_queries(candidate, "Fast")[0]
@@ -797,9 +833,11 @@ def main() -> int:
 
                     discovered_for_seller.append(evaluated)
 
+                excel.assess_results(discovered_for_seller)
                 discovered_for_seller.sort(
                     key=lambda item: (
                         item.decision != "GREEN",
+                        -item.long_term_score,
                         -item.score,
                         item.minutes_remaining,
                     )
@@ -863,6 +901,17 @@ def main() -> int:
         if settings.copy_green_to_main_queue:
             copied = excel.copy_green_to_snipe_queue(random_queue)
 
+        long_term_update = excel.update_long_term_records(
+            "RANDOM SNIPER",
+            all_results,
+            eligible,
+        )
+        logger.info(
+            "Long-term records | price snapshots=%s | portfolio rows refreshed=%s",
+            long_term_update.get("snapshots", 0),
+            long_term_update.get("portfolio_rows", 0),
+        )
+
         excel.save()
 
         logger.info("Random Range Sniper completed successfully.")
@@ -893,6 +942,10 @@ def main() -> int:
         print(f"Random Snipe Queue rows: {len(random_queue)}")
         print(f"Seller opportunities added: {seller_opportunities_added}")
         print(f"eBay Watchlist: {watchlist_summary.display}")
+        print(
+            "Strong long-term opportunities (score 80+): "
+            f"{sum(item.long_term_score >= 80 for item in all_results)}"
+        )
         print(
             "Queue GREEN opportunities: "
             f"{sum(item.decision == 'GREEN' for item in random_queue)}"

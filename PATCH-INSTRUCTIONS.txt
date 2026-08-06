@@ -1,0 +1,26 @@
+POKEMON MARKET UPDATER RESUME PATCH v1.0.1
+
+WHY THIS IS NEEDED
+The Pokémon TCG API returned a temporary HTTP 500 server error. The original
+updater retried five times but did not preserve completed pages.
+
+INSTALL
+1. Close the market updater console.
+2. Extract this patch.
+3. Copy the market_updater folder and both BAT files into the existing scanner
+   folder.
+4. Choose Replace when Windows asks about market_updater\api.py.
+5. Run update-pokemon-market-daily.bat again.
+
+FIRST RUN AFTER INSTALLING THE PATCH
+The earlier failed run did not create checkpoints, so it will begin at page 1
+once. Every page will now be saved.
+
+LATER FAILURE
+If the API fails again, rerunning update-pokemon-market-daily.bat will display:
+  Resuming incomplete download at page ...
+and continue from the saved page.
+
+MANUAL RESTART
+Use clear-market-download-checkpoint.bat only when you deliberately want to
+discard an incomplete download and restart from page 1.

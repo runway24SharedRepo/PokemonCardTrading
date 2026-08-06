@@ -6,9 +6,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from edition_safety import preferred_result_image
 from random_sniper.core import ListingResult
 from random_sniper.excel_adapter import ExcelAdapter
 from market_links import market_links_for_candidate
+from long_term_investment import LONG_TERM_HEADERS, assessment_values
 
 
 XL_TOP = -4160
@@ -66,10 +68,13 @@ class SellerRadarExcelAdapter(ExcelAdapter):
                 ).End(XL_UP).Row
             ),
         )
-        status_column = 48
+        status_column = 63
         try:
-            if str(sheet.Cells(8, 48).Value or "") != "Status":
-                status_column = 44
+            if str(sheet.Cells(8, 63).Value or "") != "Status":
+                if str(sheet.Cells(8, 48).Value or "") == "Status":
+                    status_column = 48
+                else:
+                    status_column = 44
         except Exception:
             status_column = 44
 
@@ -110,29 +115,29 @@ class SellerRadarExcelAdapter(ExcelAdapter):
         navy = self._excel_rgb(31, 78, 121)
         pale = self._excel_rgb(221, 235, 247)
 
-        sheet.Range("A1:AT1").Merge()
+        sheet.Range("A1:BM1").Merge()
         sheet.Cells(1, 1).Value = (
             f"Seller Radar — {seller}"
         )
-        sheet.Range("A1:AT1").Interior.Color = navy
-        sheet.Range("A1:AT1").Font.Color = self._excel_rgb(
+        sheet.Range("A1:BM1").Interior.Color = navy
+        sheet.Range("A1:BM1").Font.Color = self._excel_rgb(
             255,
             255,
             255,
         )
-        sheet.Range("A1:AT1").Font.Bold = True
-        sheet.Range("A1:AT1").Font.Size = 17
-        sheet.Range("A1:AT1").VerticalAlignment = XL_CENTER
+        sheet.Range("A1:BM1").Font.Bold = True
+        sheet.Range("A1:BM1").Font.Size = 17
+        sheet.Range("A1:BM1").VerticalAlignment = XL_CENTER
         sheet.Rows(1).RowHeight = 30
 
-        sheet.Range("A2:AT2").Merge()
+        sheet.Range("A2:BM2").Merge()
         sheet.Cells(2, 1).Value = (
             "Dedicated analysis of this seller's active Pokémon listings. "
             "Exact card matching, separate auction and Buy It Now outcomes, "
             "condition intelligence, market targets and native eBay links."
         )
-        sheet.Range("A2:AT2").Interior.Color = pale
-        sheet.Range("A2:AT2").WrapText = True
+        sheet.Range("A2:BM2").Interior.Color = pale
+        sheet.Range("A2:BM2").WrapText = True
         sheet.Rows(2).RowHeight = 38
 
     def _write_summary(
@@ -216,7 +221,8 @@ class SellerRadarExcelAdapter(ExcelAdapter):
             "Bid / Market", "Buy Now / Market", "Direct Listing",
             "Card Image", "Auction Search", "Buy Now Search",
             "Sold Comparables", "UK Market", "TCGplayer", "Cardmarket",
-            "PriceCharting", "Target Delivered (£)", "Maximum Bid (£)",
+            "PriceCharting", *LONG_TERM_HEADERS,
+            "Target Delivered (£)", "Maximum Bid (£)",
             "Bid Headroom (£)", "Buy Now Headroom (£)", "Bid Decision",
             "Buy Now Decision", "Ends At", "Minutes Remaining", "Bid Count",
             "Feedback %", "Feedback Count", "Condition", "Condition Flag",
@@ -230,6 +236,9 @@ class SellerRadarExcelAdapter(ExcelAdapter):
         result: ListingResult,
         old_status: str,
     ) -> list[Any]:
+        listing_image_url = str(
+            getattr(result, "image_url", "") or ""
+        ).strip()
         card_label = (
             f"{result.candidate.name} | "
             f"{result.candidate.set_name} | "
@@ -260,7 +269,15 @@ class SellerRadarExcelAdapter(ExcelAdapter):
             result.bid_ratio,
             result.buy_now_ratio,
             "Open Listing",
-            "Open Card Image" if result.candidate.image_url else "",
+            (
+                "Open Listing Image"
+                if listing_image_url
+                else (
+                    "Open Card Image"
+                    if result.candidate.image_url
+                    else ""
+                )
+            ),
             "Open Auction Search",
             "Open Buy Now Search",
             "Open Sold Results",
@@ -268,6 +285,7 @@ class SellerRadarExcelAdapter(ExcelAdapter):
             "Open TCGplayer",
             "Open Cardmarket",
             "Open PriceCharting",
+            *assessment_values(result),
             result.target_delivered,
             result.maximum_bid,
             result.bid_headroom,
@@ -295,42 +313,37 @@ class SellerRadarExcelAdapter(ExcelAdapter):
         result_count: int,
     ) -> None:
         header_fill = self._excel_rgb(31, 78, 121)
-        header = sheet.Range("A8:AX8")
+        header = sheet.Range("A8:BM8")
         header.Interior.Color = header_fill
         header.Font.Color = self._excel_rgb(255, 255, 255)
         header.Font.Bold = True
         header.HorizontalAlignment = XL_CENTER
         header.VerticalAlignment = XL_CENTER
         header.WrapText = True
-        sheet.Rows(8).RowHeight = 45
+        sheet.Rows(8).RowHeight = 52
 
-        widths = {
-            "A": 7, "B": 11, "C": 22, "D": 9, "E": 22, "F": 18,
-            "G": 40, "H": 17, "I": 24, "J": 12, "K": 22, "L": 17,
-            "M": 52, "N": 20, "O": 13, "P": 14, "Q": 11, "R": 15,
-            "S": 17, "T": 12, "U": 13, "V": 15,
-            "W": 17, "X": 17, "Y": 19, "Z": 19, "AA": 20,
-            "AB": 16, "AC": 16, "AD": 16, "AE": 17,
-            "AF": 17, "AG": 15, "AH": 15, "AI": 18,
-            "AJ": 13, "AK": 15, "AL": 18, "AM": 16, "AN": 10,
-            "AO": 12, "AP": 14, "AQ": 28, "AR": 14, "AS": 48,
-            "AT": 16, "AU": 35, "AV": 12, "AW": 55, "AX": 19,
-        }
-        for column, width in widths.items():
+        widths = [
+            7, 11, 22, 9, 22, 18, 40, 17, 24, 12, 22, 17,
+            52, 20, 13, 14, 11, 15, 17, 12, 13, 15,
+            17, 17, 19, 19, 20, 16, 16, 16, 17,
+            15, 24, 26, 18, 18, 19, 20, 21, 18, 20, 15, 25, 18, 55, 55,
+            17, 15, 15, 18, 13, 15, 18, 16, 10, 14, 14, 28, 14, 48, 16, 35, 12, 55, 19,
+        ]
+        for column, width in enumerate(widths, start=1):
             sheet.Columns(column).ColumnWidth = width
 
         bottom = max(9, 8 + result_count)
-        sheet.Range(f"O9:T{bottom}").NumberFormat = "£0.00"
-        sheet.Range(f"U9:V{bottom}").NumberFormat = "0.0%"
-        sheet.Range(f"AF9:AI{bottom}").NumberFormat = "£0.00"
-        sheet.Range(f"AL9:AL{bottom}").NumberFormat = "yyyy-mm-dd hh:mm"
-        sheet.Range(f"AO9:AO{bottom}").NumberFormat = "0.0%"
-        sheet.Range(f"AX9:AX{bottom}").NumberFormat = "yyyy-mm-dd hh:mm"
-        sheet.Range(f"A9:AX{bottom}").VerticalAlignment = XL_TOP
-        sheet.Range(f"E9:AX{bottom}").WrapText = True
+        sheet.Range(sheet.Cells(9, 15), sheet.Cells(bottom, 20)).NumberFormat = "£0.00"
+        sheet.Range(sheet.Cells(9, 21), sheet.Cells(bottom, 22)).NumberFormat = "0.0%"
+        sheet.Range(sheet.Cells(9, 47), sheet.Cells(bottom, 50)).NumberFormat = "£0.00"
+        sheet.Range(sheet.Cells(9, 53), sheet.Cells(bottom, 53)).NumberFormat = "yyyy-mm-dd hh:mm"
+        sheet.Range(sheet.Cells(9, 56), sheet.Cells(bottom, 56)).NumberFormat = "0.0%"
+        sheet.Range(sheet.Cells(9, 65), sheet.Cells(bottom, 65)).NumberFormat = "yyyy-mm-dd hh:mm"
+        sheet.Range(sheet.Cells(9, 1), sheet.Cells(bottom, 65)).VerticalAlignment = XL_TOP
+        sheet.Range(sheet.Cells(9, 5), sheet.Cells(bottom, 65)).WrapText = True
 
         self._set_validation(
-            sheet.Range("AV9:AV2008"),
+            sheet.Range("BK9:BK2008"),
             [
                 "NEW", "CHECKED", "WATCH", "BID", "BUY NOW",
                 "REJECTED", "ENDED",
@@ -340,7 +353,7 @@ class SellerRadarExcelAdapter(ExcelAdapter):
         try:
             if sheet.AutoFilterMode:
                 sheet.AutoFilterMode = False
-            sheet.Range("A8:AX2008").AutoFilter()
+            sheet.Range("A8:BM2008").AutoFilter()
         except Exception:
             pass
 
@@ -493,7 +506,7 @@ class SellerRadarExcelAdapter(ExcelAdapter):
         self._write_summary(sheet, summary)
 
         headers = self._headers()
-        sheet.Range("A8:AX8").Value = (tuple(headers),)
+        sheet.Range("A8:BM8").Value = (tuple(headers),)
 
         rows = [
             self._result_row(
@@ -508,7 +521,7 @@ class SellerRadarExcelAdapter(ExcelAdapter):
             bottom = 8 + len(rows)
             sheet.Range(
                 sheet.Cells(9, 1),
-                sheet.Cells(bottom, 50),
+                sheet.Cells(bottom, 65),
             ).Value = tuple(tuple(row) for row in rows)
 
             for offset, result in enumerate(results):
@@ -519,25 +532,44 @@ class SellerRadarExcelAdapter(ExcelAdapter):
                     result.decision,
                 )
                 self._style_decision_cell(
-                    sheet.Cells(row, 36),
+                    sheet.Cells(row, 51),
                     result.bid_decision,
                 )
                 self._style_decision_cell(
-                    sheet.Cells(row, 37),
+                    sheet.Cells(row, 52),
                     result.buy_now_decision,
                 )
                 self._style_condition_cells(
                     sheet,
                     row,
-                    condition_column=43,
-                    flag_column=44,
+                    condition_column=58,
+                    flag_column=59,
                     flag=result.condition_flag,
+                )
+                self._style_investment_cells(
+                    sheet,
+                    row,
+                    32,
+                    33,
+                    34,
+                    result.long_term_score,
                 )
 
                 links = market_links_for_candidate(result.candidate)
                 for column, address, label in (
                     (23, result.item_url, "Open Listing"),
-                    (24, result.candidate.image_url, "Open Card Image"),
+                    (
+                        24,
+                        preferred_result_image(
+                            getattr(result, "image_url", ""),
+                            result.candidate.image_url,
+                        ),
+                        (
+                            "Open Listing Image"
+                            if getattr(result, "image_url", "")
+                            else "Open Card Image"
+                        ),
+                    ),
                     (25, result.auction_search_url, "Open Auction Search"),
                     (26, result.buy_now_search_url, "Open Buy Now Search"),
                     (27, result.sold_search_url, "Open Sold Results"),

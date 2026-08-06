@@ -120,7 +120,7 @@ def test_result_row_links_are_beside_ratios():
         result,
         "",
     )
-    assert len(row) == 50
+    assert len(row) == 65
     assert row[22:31] == [
         "Open Listing",
         "Open Card Image",
@@ -132,3 +132,4 @@ def test_result_row_links_are_beside_ratios():
         "Open Cardmarket",
         "Open PriceCharting",
     ]
+    assert row[31:46] == [0, "", "", 0, 0, 0, 0, 0, 0, 0, "", "", 0, "", ""]

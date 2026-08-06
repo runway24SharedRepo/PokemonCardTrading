@@ -8,6 +8,12 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 from urllib.parse import quote_plus
 
+from edition_safety import (
+    edition_conflict,
+    edition_variant_score,
+    is_first_edition_variant,
+)
+
 
 @dataclass
 class Candidate:
@@ -22,7 +28,9 @@ class Candidate:
     source_url: str
     rarity: str = ""
     supertype: str = ""
+    release_date: Any = None
     image_url: str = ""
+    price_change: float = 0.0
 
     @property
     def identity(self) -> str:
@@ -91,6 +99,22 @@ class RadarResult:
     discovery_source: str = "BROAD RADAR"
     parent_item_id: str = ""
     notes: str = ""
+    long_term_score: int = 0
+    investment_tier: str = ""
+    long_term_action: str = ""
+    demand_score: int = 0
+    scarcity_score: int = 0
+    significance_score: int = 0
+    reprint_resistance_score: int = 0
+    condition_investment_score: int = 0
+    price_resilience_score: int = 0
+    acquisition_discount_score: int = 0
+    investment_data_confidence: str = ""
+    portfolio_fit: str = ""
+    minimum_hold_years: int = 0
+    investment_thesis: str = ""
+    investment_risks: str = ""
+    desired_max_ratio: float | None = None
 
     @property
     def card_label(self) -> str:
@@ -140,6 +164,424 @@ def meaningful_tokens(value: str) -> list[str]:
     ]
 
 
+
+_COLLECTOR_FRACTION_RE = re.compile(
+    r"(?<![a-z0-9])"
+    r"([a-z]{0,6}-?\d{1,4})"
+    r"\s*/\s*"
+    r"([a-z]{0,6}-?\d{1,4})"
+    r"(?![a-z0-9])",
+    re.IGNORECASE,
+)
+
+_PRIMARY_CARD_FORMS = {
+    "v",
+    "vmax",
+    "vstar",
+    "ex",
+    "gx",
+    "break",
+    "prime",
+    "lvx",
+    "vunion",
+    "mega",
+}
+_CARD_NAME_MODIFIERS = {
+    "dark",
+    "light",
+    "radiant",
+    "shining",
+}
+_INDEX_NOISE_TOKENS = {
+    "ex",
+    "gx",
+    "vmax",
+    "vstar",
+    "break",
+    "prime",
+    "holo",
+    "foil",
+}
+
+
+def _plain_text(value: Any) -> str:
+    text = unicodedata.normalize(
+        "NFKD",
+        str(value or ""),
+    )
+    return "".join(
+        character
+        for character in text
+        if not unicodedata.combining(character)
+    ).casefold()
+
+
+def canonical_collector_token(value: Any) -> str:
+    """Canonicalise one collector-number component.
+
+    Numeric leading zeroes are ignored, so 028 and 28 represent the same
+    printed number. Alphanumeric promo/subset identifiers retain their prefix,
+    so XY41, TG06 and SWSH020 remain distinct identities.
+    """
+
+    compact = re.sub(
+        r"[^a-z0-9]+",
+        "",
+        _plain_text(value),
+    )
+    if not compact:
+        return ""
+
+    match = re.fullmatch(
+        r"([a-z]*)(\d+)",
+        compact,
+    )
+    if not match:
+        return compact
+
+    prefix, digits = match.groups()
+    return f"{prefix}{int(digits)}"
+
+
+def _candidate_collector_parts(
+    number: Any,
+) -> tuple[str, str]:
+    raw = _plain_text(number).strip()
+    if not raw:
+        return "", ""
+
+    pieces = raw.split("/", 1)
+    numerator = canonical_collector_token(
+        pieces[0]
+    )
+    denominator = (
+        canonical_collector_token(pieces[1])
+        if len(pieces) > 1
+        else ""
+    )
+    return numerator, denominator
+
+
+def _title_collector_fractions(
+    title: Any,
+) -> list[tuple[str, str, str]]:
+    raw = _plain_text(title).replace("／", "/")
+    output: list[tuple[str, str, str]] = []
+
+    for match in _COLLECTOR_FRACTION_RE.finditer(raw):
+        numerator = canonical_collector_token(
+            match.group(1)
+        )
+        denominator = canonical_collector_token(
+            match.group(2)
+        )
+        if numerator and denominator:
+            output.append(
+                (
+                    numerator,
+                    denominator,
+                    match.group(0).strip(),
+                )
+            )
+    return output
+
+
+def collector_number_evidence(
+    title: Any,
+    number: Any,
+) -> tuple[float, bool, str]:
+    """Return score, hard-conflict flag and diagnostic text.
+
+    When a listing contains an explicit printed fraction such as 028/88,
+    only the numerator may identify the card. A different numerator is a hard
+    identity conflict; the denominator can never match candidate number 88.
+    """
+
+    expected, expected_total = (
+        _candidate_collector_parts(number)
+    )
+    if not expected:
+        return 0.0, False, (
+            "The market database has no collector number"
+        )
+
+    fractions = _title_collector_fractions(title)
+    if fractions:
+        for numerator, denominator, _ in fractions:
+            if numerator != expected:
+                continue
+            if (
+                expected_total
+                and denominator != expected_total
+            ):
+                continue
+            return 1.0, False, ""
+
+        observed = ", ".join(
+            original
+            for _, _, original in fractions[:3]
+        )
+        return (
+            0.0,
+            True,
+            (
+                f"Collector-number conflict: listing shows "
+                f"{observed}; expected {number}"
+            ),
+        )
+
+    raw = _plain_text(title)
+
+    # Strong evidence when the seller explicitly labels the number.
+    labelled_pattern = re.compile(
+        rf"(?:#|no\.?|number)\s*0*"
+        rf"{re.escape(expected)}"
+        rf"(?![a-z0-9])",
+        re.IGNORECASE,
+    )
+    if labelled_pattern.search(raw):
+        return 0.95, False, ""
+
+    # Exact standalone token. This also handles compact promo numbers such as
+    # XY41 and leading-zero numeric titles such as 028.
+    for token in re.findall(
+        r"[a-z]*\d+|\d+[a-z]*",
+        raw,
+        flags=re.IGNORECASE,
+    ):
+        if canonical_collector_token(token) == expected:
+            return 0.82, False, ""
+
+    return (
+        0.0,
+        False,
+        (
+            f"Exact collector number {number} "
+            "was not found in the listing title"
+        ),
+    )
+
+
+def _extract_card_forms(
+    tokens: list[str],
+) -> set[str]:
+    forms: set[str] = set()
+    token_set = set(tokens)
+
+    if "vstar" in token_set:
+        forms.add("vstar")
+    elif "vmax" in token_set:
+        forms.add("vmax")
+    elif (
+        "v" in token_set
+        and "union" in token_set
+    ):
+        forms.add("vunion")
+    elif "vunion" in token_set:
+        forms.add("vunion")
+    elif "v" in token_set:
+        forms.add("v")
+
+    for value in (
+        "ex",
+        "gx",
+        "break",
+        "prime",
+    ):
+        if value in token_set:
+            forms.add(value)
+
+    if (
+        "lvx" in token_set
+        or (
+            "lv" in token_set
+            and "x" in token_set
+        )
+        or (
+            "level" in token_set
+            and "x" in token_set
+        )
+    ):
+        forms.add("lvx")
+
+    if (
+        "mega" in token_set
+        or (
+            "m" in token_set
+            and "ex" in token_set
+        )
+    ):
+        forms.add("mega")
+
+    for value in _CARD_NAME_MODIFIERS:
+        if value in token_set:
+            forms.add(value)
+
+    return forms
+
+
+def _base_name_tokens(
+    candidate_name: str,
+) -> list[str]:
+    tokens = normalize_text(candidate_name).split()
+    removable = {
+        "v",
+        "vmax",
+        "vstar",
+        "ex",
+        "gx",
+        "break",
+        "prime",
+        "lv",
+        "level",
+        "x",
+        "lvx",
+        "union",
+        "vunion",
+        "mega",
+        "m",
+        *_CARD_NAME_MODIFIERS,
+    }
+    base = [
+        token
+        for token in tokens
+        if token not in removable
+    ]
+    return base or tokens
+
+
+def card_form_conflict(
+    candidate_name: str,
+    listing_title: str,
+) -> str:
+    """Reject different Pokémon card forms near the detected card name."""
+
+    candidate_tokens = normalize_text(
+        candidate_name
+    ).split()
+    candidate_forms = _extract_card_forms(
+        candidate_tokens
+    )
+
+    base_tokens = _base_name_tokens(candidate_name)
+    title_tokens = normalize_text(
+        listing_title
+    ).split()
+
+    anchor = -1
+    for base_token in base_tokens:
+        try:
+            anchor = title_tokens.index(base_token)
+            break
+        except ValueError:
+            continue
+
+    if anchor < 0:
+        return ""
+
+    # Forms in card titles normally occur immediately before or shortly after
+    # the Pokémon name: M Charizard EX, Mawile VSTAR, Garchomp C LV.X.
+    window = title_tokens[
+        max(0, anchor - 2):
+        min(len(title_tokens), anchor + len(base_tokens) + 4)
+    ]
+    title_forms = _extract_card_forms(window)
+
+    candidate_primary = (
+        candidate_forms & _PRIMARY_CARD_FORMS
+    )
+    title_primary = title_forms & _PRIMARY_CARD_FORMS
+
+    if (
+        candidate_primary != title_primary
+        and (candidate_primary or title_primary)
+    ):
+        expected = (
+            "/".join(sorted(candidate_primary))
+            if candidate_primary
+            else "standard card"
+        )
+        observed = (
+            "/".join(sorted(title_primary))
+            if title_primary
+            else "standard card"
+        )
+        return (
+            "Card-form conflict: listing appears to be "
+            f"{observed}; database candidate is {expected}"
+        )
+
+    candidate_modifiers = (
+        candidate_forms & _CARD_NAME_MODIFIERS
+    )
+    title_modifiers = (
+        title_forms & _CARD_NAME_MODIFIERS
+    )
+    if (
+        candidate_modifiers != title_modifiers
+        and (
+            candidate_modifiers
+            or title_modifiers
+        )
+    ):
+        expected = (
+            "/".join(sorted(candidate_modifiers))
+            if candidate_modifiers
+            else "unmodified"
+        )
+        observed = (
+            "/".join(sorted(title_modifiers))
+            if title_modifiers
+            else "unmodified"
+        )
+        return (
+            "Card-name modifier conflict: listing is "
+            f"{observed}; database candidate is {expected}"
+        )
+
+    return ""
+
+
+def explicit_variant_conflict(
+    candidate_variant: str,
+    listing_title: str,
+) -> str:
+    title = normalize_text(listing_title)
+    variant = normalize_text(candidate_variant)
+
+    title_reverse = (
+        "reverse holo" in title
+        or "reverse foil" in title
+        or "rev holo" in title
+    )
+    candidate_reverse = "reverse" in variant
+
+    if title_reverse and not candidate_reverse:
+        return (
+            "Variant conflict: listing explicitly says "
+            "Reverse Holo"
+        )
+
+    if candidate_reverse and (
+        "regular holo" in title
+        or "normal holo" in title
+        or "non reverse" in title
+        or "non reverse holo" in title
+    ):
+        return (
+            "Variant conflict: listing explicitly identifies "
+            "a regular/non-Reverse version"
+        )
+
+    hard_edition_conflict = edition_conflict(
+        candidate_variant,
+        listing_title,
+    )
+    if hard_edition_conflict:
+        return hard_edition_conflict
+
+    return ""
+
 def variant_keywords(variant: str) -> str:
     value = normalize_text(variant)
     if value in {"", "normal"}:
@@ -186,23 +628,11 @@ def ebay_sold_search_url(query: str) -> str:
 
 
 def card_number_match(title: str, number: str) -> float:
-    number = normalize_text(number).replace(" ", "")
-    if not number:
-        return 0.0
-
-    normal_title = normalize_text(title)
-    title_compact = normal_title.replace(" ", "")
-    escaped = re.escape(number)
-
-    if re.search(
-        rf"(?<![a-z0-9]){escaped}(?:/\d+)?(?![a-z0-9])",
-        normal_title,
-    ):
-        return 1.0
-    if number in title_compact:
-        return 0.75
-    return 0.0
-
+    score, _, _ = collector_number_evidence(
+        title,
+        number,
+    )
+    return score
 
 def listing_match_score(
     candidate: Candidate,
@@ -213,40 +643,95 @@ def listing_match_score(
     title_tokens = set(title_normalized.split())
 
     for excluded in exclusions:
-        term = normalize_text(excluded)
-        if term and term in title_normalized:
+        excluded_normalized = normalize_text(excluded)
+        if (
+            excluded_normalized
+            and excluded_normalized in title_normalized
+        ):
             return 0.0, f"Excluded term: {excluded}"
 
     name_tokens = meaningful_tokens(candidate.name)
-    name_hits = sum(token in title_tokens for token in name_tokens)
+    name_hits = sum(
+        1
+        for token in name_tokens
+        if token in title_tokens
+    )
     name_score = (
         name_hits / len(name_tokens)
         if name_tokens
         else 0.0
     )
+    if name_score < 0.72:
+        return 0.0, (
+            "Card name did not match reliably"
+        )
 
-    number_score = card_number_match(
+    form_conflict = card_form_conflict(
+        candidate.name,
         listing_title,
-        candidate.number,
     )
+    if form_conflict:
+        return 0.0, form_conflict
+
+    number_score, hard_conflict, number_reason = (
+        collector_number_evidence(
+            listing_title,
+            candidate.number,
+        )
+    )
+    if hard_conflict:
+        return 0.0, number_reason
+    if number_score < 0.75:
+        return 0.0, number_reason
+
+    variant_conflict = explicit_variant_conflict(
+        candidate.variant,
+        listing_title,
+    )
+    if variant_conflict:
+        return 0.0, variant_conflict
 
     set_tokens = meaningful_tokens(candidate.set_name)
-    set_hits = sum(token in title_tokens for token in set_tokens)
+    set_hits = sum(
+        1
+        for token in set_tokens
+        if token in title_tokens
+    )
     set_score = (
         set_hits / len(set_tokens)
         if set_tokens
         else 0.0
     )
+    normalized_set = normalize_text(
+        candidate.set_name
+    )
+    if (
+        normalized_set
+        and normalized_set in title_normalized
+    ):
+        set_score = 1.0
 
     variant = normalize_text(candidate.variant)
-    variant_score = 0.50
-    if "reverse" in variant:
+    edition_score = edition_variant_score(
+        candidate.variant,
+        listing_title,
+    )
+
+    if edition_score is not None:
+        variant_score = edition_score
+    elif "reverse" in variant:
         variant_score = (
-            1.0 if "reverse" in title_normalized else 0.10
+            1.0
+            if (
+                "reverse holo" in title_normalized
+                or "reverse foil" in title_normalized
+                or "rev holo" in title_normalized
+            )
+            else 0.15
         )
     elif "holo" in variant:
         if "reverse" in title_normalized:
-            variant_score = 0.20
+            variant_score = 0.10
         elif (
             "holo" in title_normalized
             or "foil" in title_normalized
@@ -254,41 +739,39 @@ def listing_match_score(
             variant_score = 1.0
         else:
             variant_score = 0.55
-    elif variant == "normal":
+    elif variant in {
+        "normal",
+        "unlimited",
+        "unlimited normal",
+        "standard",
+    }:
         variant_score = (
-            0.35
+            0.30
             if (
                 "reverse" in title_normalized
                 or "holo" in title_normalized
+                or "foil" in title_normalized
             )
-            else 0.75
+            else 0.82
         )
-    elif "1st" in variant or "first" in variant:
-        variant_score = (
-            1.0
-            if (
-                "1st" in title_normalized
-                or "first" in title_normalized
-            )
-            else 0.15
-        )
+    else:
+        variant_score = 0.50
+
 
     score = (
-        0.47 * name_score
-        + 0.30 * number_score
-        + 0.12 * set_score
-        + 0.11 * variant_score
+        0.45 * name_score
+        + 0.32 * number_score
+        + 0.13 * set_score
+        + 0.10 * variant_score
     )
 
-    if name_score < 0.60:
-        return 0.0, "Card name did not match reliably"
-    if number_score < 0.75:
-        return 0.0, "Exact card number was not found"
+    # Titles without a set name can still be accepted when name, form and
+    # printed number uniquely identify the candidate. Ambiguity is handled by
+    # CandidateTitleMatcher against the complete market database.
     if set_score == 0:
-        score *= 0.88
+        score *= 0.94
 
     return min(1.0, score), ""
-
 
 def confidence_label(score: float) -> str:
     if score >= 0.84:
@@ -299,66 +782,143 @@ def confidence_label(score: float) -> str:
 
 
 class CandidateTitleMatcher:
-    """Match an unknown auction title to one exact market-database variant."""
+    """Match an unknown listing to one unambiguous database identity."""
 
-    def __init__(self, candidates: Iterable[Candidate]) -> None:
+    def __init__(
+        self,
+        candidates: Iterable[Candidate],
+    ) -> None:
         from collections import defaultdict
 
-        self._token_index: dict[str, list[Candidate]] = defaultdict(list)
+        self._token_index: dict[
+            str,
+            list[Candidate],
+        ] = defaultdict(list)
+
         for candidate in candidates:
-            for token in set(meaningful_tokens(candidate.name)):
-                if len(token) >= 3:
-                    self._token_index[token].append(candidate)
+            for token in set(
+                meaningful_tokens(candidate.name)
+            ):
+                if (
+                    len(token) >= 2
+                    and token not in {
+                        "ex",
+                        "gx",
+                        "vmax",
+                        "vstar",
+                        "break",
+                        "prime",
+                    }
+                ):
+                    self._token_index[token].append(
+                        candidate
+                    )
 
     def match(
         self,
         title: str,
         exclusions: Iterable[str],
-    ) -> tuple[Candidate | None, float, str]:
+    ) -> tuple[
+        Candidate | None,
+        float,
+        str,
+    ]:
         normalized = normalize_text(title)
         title_tokens = set(normalized.split())
-        candidate_pool: dict[str, Candidate] = {}
+        candidate_pool: dict[
+            str,
+            Candidate,
+        ] = {}
 
         for token in title_tokens:
-            for candidate in self._token_index.get(token, []):
-                candidate_pool[candidate.identity] = candidate
+            for candidate in self._token_index.get(
+                token,
+                [],
+            ):
+                candidate_pool[
+                    candidate.identity
+                ] = candidate
 
-        scored: list[tuple[float, Candidate]] = []
+        scored: list[
+            tuple[float, float, Candidate]
+        ] = []
         for candidate in candidate_pool.values():
             score, _ = listing_match_score(
                 candidate,
                 title,
                 exclusions,
             )
-            if score >= 0.72:
-                scored.append((score, candidate))
+            if score < 0.72:
+                continue
+
+            set_tokens = meaningful_tokens(
+                candidate.set_name
+            )
+            set_score = (
+                sum(
+                    token in title_tokens
+                    for token in set_tokens
+                )
+                / len(set_tokens)
+                if set_tokens
+                else 0.0
+            )
+            scored.append(
+                (
+                    score,
+                    set_score,
+                    candidate,
+                )
+            )
 
         if not scored:
-            return None, 0.0, "No exact database card match"
+            return (
+                None,
+                0.0,
+                "No exact database card match",
+            )
 
         scored.sort(
             key=lambda value: (
                 value[0],
-                value[1].market_value,
+                value[1],
+                value[2].market_value,
             ),
             reverse=True,
         )
-        best_score, best = scored[0]
+        best_score, best_set_score, best = scored[0]
 
         if len(scored) > 1:
-            second_score, second = scored[1]
+            (
+                second_score,
+                second_set_score,
+                second,
+            ) = scored[1]
+
+            clear_set_advantage = (
+                best_set_score >= 0.75
+                and best_set_score
+                - second_set_score >= 0.35
+            )
+            clear_score_advantage = (
+                best_score - second_score >= 0.055
+            )
+
             if (
                 best.identity != second.identity
-                and best_score - second_score < 0.045
+                and not clear_set_advantage
+                and not clear_score_advantage
             ):
                 return (
                     None,
                     best_score,
-                    "Ambiguous database match",
+                    (
+                        "Ambiguous exact identity: multiple "
+                        "sets or variants remain possible"
+                    ),
                 )
 
         return best, best_score, ""
-
 
 def decision_for(
     ratio: float,

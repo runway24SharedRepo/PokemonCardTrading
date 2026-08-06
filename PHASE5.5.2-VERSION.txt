@@ -1,0 +1,2 @@
+Pokémon Scanner Phase 5.5.2
+Exact collector-number, card-form and ambiguity-safe matching.

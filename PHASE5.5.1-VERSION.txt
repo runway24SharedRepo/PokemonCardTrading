@@ -1,0 +1,2 @@
+Pokémon Scanner Phase 5.5.1
+Dashboard merged-cell recovery hotfix.

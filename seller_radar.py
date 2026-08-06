@@ -440,6 +440,7 @@ def main() -> int:
                 deduplicated[result.item_id] = result
 
         results = list(deduplicated.values())
+        excel.assess_results(results)
         decision_order = {
             "GREEN": 0,
             "AMBER": 1,
@@ -451,6 +452,7 @@ def main() -> int:
                     result.decision,
                     3,
                 ),
+                -result.long_term_score,
                 result.ratio,
                 result.minutes_remaining,
                 -result.score,
@@ -524,6 +526,16 @@ def main() -> int:
             unmatched=unmatched,
             summary=summary,
         )
+        long_term_update = excel.update_long_term_records(
+            f"SELLER RADAR: {seller}",
+            results,
+            candidates,
+        )
+        logger.info(
+            "Long-term records | price snapshots=%s | portfolio rows refreshed=%s",
+            long_term_update.get("snapshots", 0),
+            long_term_update.get("portfolio_rows", 0),
+        )
         excel.save()
 
         run_id = (
@@ -588,6 +600,10 @@ def main() -> int:
         print(f"GREEN: {green}")
         print(f"AMBER: {amber}")
         print(f"RED: {red}")
+        print(
+            "Strong long-term opportunities (score 80+): "
+            f"{sum(result.long_term_score >= 80 for result in results)}"
+        )
         print(f"Unmatched/manual review: {len(unmatched)}")
         print(
             f"eBay API calls: {client.total_api_calls} "

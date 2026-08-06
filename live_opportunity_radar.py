@@ -591,9 +591,11 @@ def main() -> int:
             ):
                 primary_results.append(final)
 
+        excel.assess_results(primary_results)
         primary_results.sort(
             key=lambda result: (
                 result.decision != "GREEN",
+                -result.long_term_score,
                 result.minutes_remaining,
                 -result.score,
             )
@@ -754,9 +756,11 @@ def main() -> int:
                         found_for_seller.append(final)
                         known_item_ids.add(final.item_id)
 
+                excel.assess_results(found_for_seller)
                 found_for_seller.sort(
                     key=lambda result: (
                         result.decision != "GREEN",
+                        -result.long_term_score,
                         result.minutes_remaining,
                         -result.score,
                     )
@@ -822,6 +826,16 @@ def main() -> int:
                 f"{budget.used}/{budget.maximum_calls} API calls."
             ),
         )
+        long_term_update = excel.update_long_term_records(
+            "LIVE RADAR",
+            final_results,
+            candidates,
+        )
+        logger.info(
+            "Long-term records | price snapshots=%s | portfolio rows refreshed=%s",
+            long_term_update.get("snapshots", 0),
+            long_term_update.get("portfolio_rows", 0),
+        )
         excel.save()
 
         logger.info("LIVE OPPORTUNITY RADAR SUCCESSFUL.")
@@ -853,6 +867,10 @@ def main() -> int:
         print(f"Live opportunity rows: {len(final_results)}")
         print(f"GREEN: {green}")
         print(f"AMBER: {amber}")
+        print(
+            "Strong long-term opportunities (score 80+): "
+            f"{sum(result.long_term_score >= 80 for result in final_results)}"
+        )
         print(
             "Same-seller opportunities: "
             f"{len(seller_discoveries)}"
