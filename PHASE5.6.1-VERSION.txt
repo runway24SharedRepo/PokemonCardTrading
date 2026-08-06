@@ -1,0 +1,2 @@
+Pokémon Scanner Phase 5.6.1
+Market Data Import authority, TCGplayer-primary pricing and verified overrides.

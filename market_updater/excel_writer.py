@@ -6,6 +6,12 @@ from pathlib import Path
 from typing import Any
 
 from .pricing import FxRates, PriceVariant, best_price_summary
+from market_price_controls import (
+    ensure_controls_sheet,
+    mark_controls_applied,
+    read_controls,
+    resolve_effective_value,
+)
 
 
 XL_UP = -4162
@@ -174,12 +180,29 @@ def write_workbook(
             )
 
         # -------------------------------------------------------------
-        # Market Data Import
+        # Market Price Controls + Market Data Import
         # -------------------------------------------------------------
-        market = _get_or_add_sheet(workbook, config["market_import_sheet"])
-        old_last = max(5, _last_used_row(market, 1))
-        market.Range(f"A1:L{old_last}").ClearContents()
-        market.Range(f"A1:L{old_last}").ClearFormats()
+        ensure_controls_sheet(workbook)
+        market_controls = read_controls(
+            workbook
+        )
+
+        market = _get_or_add_sheet(
+            workbook,
+            config["market_import_sheet"],
+        )
+        old_last = max(
+            5,
+            _last_used_row(market, 1),
+        )
+        market.Range(
+            market.Cells(1, 1),
+            market.Cells(old_last, 19),
+        ).ClearContents()
+        market.Range(
+            market.Cells(1, 1),
+            market.Cells(old_last, 19),
+        ).ClearFormats()
 
         market_headers = [
             "Enabled",
@@ -194,23 +217,64 @@ def write_workbook(
             "Source Date",
             "Source URL",
             "Notes",
+            "Card ID",
+            "Base Imported Value (£)",
+            "Base Imported Source",
+            "Override Value (£)",
+            "Override Source",
+            "Price Status",
+            "Last Synced",
         ]
         _style_title(
             market,
-            "Market Data Import — Daily Full English Price Database",
             (
-                "Generated from the Pokémon TCG API. Prices are Cardmarket EUR "
-                "or TCGplayer USD reference values converted into GBP. "
-                "They are not guaranteed UK sale prices; verify photographs, "
-                "condition and exact printing before bidding."
+                "Market Data Import — "
+                "Authoritative Scanner Values"
+            ),
+            (
+                "Column H is the single market value used by Random, "
+                "Snipe, Live, Seller Radar, long-term scoring and AI. "
+                "TCGplayer variant-specific market is primary; "
+                "Cardmarket trend is fallback only. Verified overrides "
+                "from Market Price Controls take priority."
             ),
             len(market_headers),
         )
-        market.Range("A4:L4").Value = (tuple(market_headers),)
-        _style_header(market, 4, len(market_headers))
+        market.Range(
+            market.Cells(4, 1),
+            market.Cells(
+                4,
+                len(market_headers),
+            ),
+        ).Value = (
+            tuple(market_headers),
+        )
+        _style_header(
+            market,
+            4,
+            len(market_headers),
+        )
 
         market_rows = []
+        override_count = 0
+        fallback_count = 0
+
         for price in prices:
+            effective = resolve_effective_value(
+                price,
+                market_controls,
+            )
+            if (
+                effective.override_value_gbp
+                is not None
+            ):
+                override_count += 1
+            if (
+                effective.price_status
+                == "CARDMARKET FALLBACK"
+            ):
+                fallback_count += 1
+
             market_rows.append(
                 [
                     "YES",
@@ -220,39 +284,87 @@ def write_workbook(
                     price.variant,
                     "English",
                     "Market reference",
-                    price.price_gbp,
-                    price.source,
-                    price.source_date,
-                    price.source_url,
+                    effective.effective_value_gbp,
+                    effective.effective_source,
+                    effective.effective_source_date,
+                    effective.effective_source_url,
+                    effective.notes,
+                    price.card_id,
+                    effective.base_value_gbp,
+                    effective.base_source,
                     (
-                        f"{price.original_currency} {price.original_price:.2f} "
-                        f"{price.source_field}; converted to GBP using "
-                        f"{fx.source}. Verify exact condition."
+                        effective.override_value_gbp
+                        if effective.override_value_gbp
+                        is not None
+                        else ""
                     ),
+                    effective.override_source,
+                    effective.price_status,
+                    sync_metadata["synced_at"],
                 ]
             )
 
-        _write_rows(market, 5, 1, market_rows)
-        market_last = 4 + len(market_rows)
+        _write_rows(
+            market,
+            5,
+            1,
+            market_rows,
+        )
+        market_last = max(
+            5,
+            4 + len(market_rows),
+        )
 
-        market.Columns("A").ColumnWidth = 9
-        market.Columns("B").ColumnWidth = 25
-        market.Columns("C").ColumnWidth = 25
-        market.Columns("D").ColumnWidth = 12
-        market.Columns("E").ColumnWidth = 22
-        market.Columns("F").ColumnWidth = 11
-        market.Columns("G").ColumnWidth = 18
-        market.Columns("H").ColumnWidth = 15
-        market.Columns("I").ColumnWidth = 29
-        market.Columns("J").ColumnWidth = 13
-        market.Columns("K").ColumnWidth = 42
-        market.Columns("L").ColumnWidth = 55
-        market.Range(f"D5:D{market_last}").NumberFormat = "@"
-        market.Range(f"H5:H{market_last}").NumberFormat = '£0.00'
-        market.Range(f"J5:J{market_last}").NumberFormat = "yyyy-mm-dd"
-        market.Range(f"A5:L{market_last}").VerticalAlignment = -4160
-        market.Range(f"B5:L{market_last}").WrapText = True
-        _set_freeze_and_filter(excel, market, 4, market_last, 12)
+        widths = [
+            9, 25, 25, 12, 22, 11, 18,
+            15, 34, 14, 48, 60, 18, 20,
+            34, 18, 25, 23, 20,
+        ]
+        for index, width in enumerate(
+            widths,
+            start=1,
+        ):
+            market.Columns(
+                index
+            ).ColumnWidth = width
+
+        market.Range(
+            f"D5:D{market_last}"
+        ).NumberFormat = "@"
+        market.Range(
+            f"H5:H{market_last}"
+        ).NumberFormat = "£0.00"
+        market.Range(
+            f"N5:N{market_last}"
+        ).NumberFormat = "£0.00"
+        market.Range(
+            f"P5:P{market_last}"
+        ).NumberFormat = "£0.00"
+        market.Range(
+            f"J5:J{market_last}"
+        ).NumberFormat = "yyyy-mm-dd"
+        market.Range(
+            f"S5:S{market_last}"
+        ).NumberFormat = (
+            "yyyy-mm-dd hh:mm"
+        )
+        market.Range(
+            f"A5:S{market_last}"
+        ).VerticalAlignment = -4160
+        market.Range(
+            f"B5:S{market_last}"
+        ).WrapText = True
+        _set_freeze_and_filter(
+            excel,
+            market,
+            4,
+            market_last,
+            len(market_headers),
+        )
+        mark_controls_applied(
+            workbook,
+            market_controls,
+        )
 
         # -------------------------------------------------------------
         # Full Card Database
@@ -520,19 +632,40 @@ def write_workbook(
         )
 
         cardmarket_count = sum(
-            1 for price in prices if "Cardmarket" in price.source
+            1
+            for price in prices
+            if "Cardmarket" in price.source
         )
         tcg_count = sum(
-            1 for price in prices if "TCGplayer" in price.source
+            1
+            for price in prices
+            if "TCGplayer" in price.source
         )
         kpis = [
             ["Metric", "Value", "Meaning"],
             ["Last successful refresh", sync_metadata["synced_at"], "Local completion time"],
             ["English cards downloaded", len(cards), "One record per API card ID"],
             ["Priced variants imported", len(prices), "Rows written to Market Data Import"],
-            ["Cardmarket-priced variants", cardmarket_count, "European source values"],
-            ["TCGplayer-priced variants", tcg_count, "US source values"],
-            ["Price changes detected", len(changes), "Compared with previous successful run"],
+            [
+                "TCGplayer primary variants",
+                tcg_count,
+                "Variant-specific market values",
+            ],
+            [
+                "Cardmarket fallback variants",
+                cardmarket_count,
+                "Used only when exact TCGplayer variant is unavailable",
+            ],
+            [
+                "Verified overrides applied",
+                override_count,
+                "Market Price Controls values replacing the base import",
+            ],
+            [
+                "Price changes detected",
+                len(changes),
+                "Compared with previous successful run",
+            ],
             ["EUR → GBP rate", fx.eur_to_gbp, fx.source],
             ["USD → GBP rate", fx.usd_to_gbp, fx.source],
             ["FX rate date", fx.rate_date, "Reference-rate date"],
@@ -541,17 +674,17 @@ def write_workbook(
             ["Original market rows backed up", manual_rows_backed_up, "Stored in Market Data Manual Backup"],
             ["Workbook backup", str(backup_path), "Created before Excel changes"],
         ]
-        summary.Range("A4:C17").Value = tuple(tuple(row) for row in kpis)
+        summary.Range("A4:C19").Value = tuple(tuple(row) for row in kpis)
         _style_header(summary, 4, 3)
-        summary.Range("A5:A17").Font.Bold = True
-        summary.Range("A5:A17").Interior.Color = 0xD9EAF7
-        summary.Range("B5:B17").Interior.Color = 0xE2F0D9
+        summary.Range("A5:A19").Font.Bold = True
+        summary.Range("A5:A19").Interior.Color = 0xD9EAF7
+        summary.Range("B5:B19").Interior.Color = 0xE2F0D9
         summary.Columns("A").ColumnWidth = 31
         summary.Columns("B").ColumnWidth = 58
         summary.Columns("C").ColumnWidth = 52
         summary.Range("B11:B12").NumberFormat = "0.000000"
-        summary.Range("A4:C17").WrapText = True
-        summary.Rows("5:17").RowHeight = 24
+        summary.Range("A4:C19").WrapText = True
+        summary.Rows("5:19").RowHeight = 24
 
         # -------------------------------------------------------------
         # Price Import Log append
@@ -585,7 +718,7 @@ def write_workbook(
                 len(prices),
                 len(cards) - len(variants_by_card),
                 0,
-                "Cardmarket + TCGplayer via Pokémon TCG API",
+                "TCGplayer primary + Cardmarket fallback + verified overrides",
                 (
                     f"Full daily sync; {len(changes)} price changes; "
                     f"EUR/GBP {fx.eur_to_gbp:.6f}; "

@@ -680,7 +680,7 @@ class ExcelAdapter:
         results: list[ListingResult],
     ) -> None:
         sheet = self.sheet(sheet_name)
-        sheet.Range("A5:BM1504").ClearContents()
+        sheet.Range("A5:CF1504").ClearContents()
         try:
             sheet.Range("W5:AE1504").Hyperlinks.Delete()
         except Exception:
@@ -923,7 +923,7 @@ class ExcelAdapter:
             return 0
 
         sheet = self.sheet("Snipe Queue")
-        sheet.Range("A5:AS505").ClearContents()
+        sheet.Range("A5:BL505").ClearContents()
         try:
             sheet.Range("X5:AD505").Hyperlinks.Delete()
         except Exception:

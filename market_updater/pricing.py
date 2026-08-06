@@ -60,6 +60,13 @@ def build_price_variants(
     fx: FxRates,
     config: dict[str, Any],
 ) -> list[PriceVariant]:
+    """Build variant prices with a conservative, auditable hierarchy.
+
+    TCGplayer's variant-specific market price is primary. Cardmarket trend is
+    used only when TCGplayer has no price for that exact variant. This prevents
+    a broad Cardmarket trend from silently becoming the scanner's Normal value.
+    """
+
     card_id = str(card.get("id", "")).strip()
     card_name = str(card.get("name", "")).strip()
     set_info = card.get("set") or {}
@@ -74,67 +81,7 @@ def build_price_variants(
     tcg_url = str(tcgplayer.get("url", "")).strip()
     tcg_date = str(tcgplayer.get("updatedAt", "")).strip()
 
-    edition_sensitive = any(
-        key in tcg_prices
-        for key in (
-            "1stEditionNormal",
-            "1stEditionHolofoil",
-        )
-    )
-
-    cardmarket = card.get("cardmarket") or {}
-    cardmarket_prices = cardmarket.get("prices") or {}
-    cardmarket_url = str(cardmarket.get("url", "")).strip()
-    cardmarket_date = str(cardmarket.get("updatedAt", "")).strip()
-
-    normal_value, normal_field = first_number(
-        cardmarket_prices,
-        config["cardmarket_normal_price_priority"],
-    )
-    if normal_value is not None and not edition_sensitive:
-        selected["Normal"] = PriceVariant(
-            card_id=card_id,
-            card_name=card_name,
-            set_id=set_id,
-            set_name=set_name,
-            card_number=number,
-            variant="Normal",
-            price_gbp=round(
-                normal_value * fx.eur_to_gbp,
-                2,
-            ),
-            source="Pokémon TCG API / Cardmarket",
-            source_date=cardmarket_date,
-            source_url=cardmarket_url,
-            original_price=normal_value,
-            original_currency="EUR",
-            source_field=normal_field,
-        )
-
-    reverse_value, reverse_field = first_number(
-        cardmarket_prices,
-        config["cardmarket_reverse_price_priority"],
-    )
-    if reverse_value is not None:
-        selected["Reverse Holofoil"] = PriceVariant(
-            card_id=card_id,
-            card_name=card_name,
-            set_id=set_id,
-            set_name=set_name,
-            card_number=number,
-            variant="Reverse Holofoil",
-            price_gbp=round(
-                reverse_value * fx.eur_to_gbp,
-                2,
-            ),
-            source="Pokémon TCG API / Cardmarket",
-            source_date=cardmarket_date,
-            source_url=cardmarket_url,
-            original_price=reverse_value,
-            original_currency="EUR",
-            source_field=reverse_field,
-        )
-
+    # 1. Variant-specific TCGplayer market is the primary source.
     for api_variant, values in tcg_prices.items():
         display_variant = TCG_VARIANT_NAMES.get(
             api_variant,
@@ -147,16 +94,7 @@ def build_price_variants(
         if value is None:
             continue
 
-        source = "Pokémon TCG API / TCGplayer"
-        if edition_sensitive and display_variant in {
-            "Normal",
-            "Holofoil",
-            "1st Edition Normal",
-            "1st Edition Holofoil",
-        }:
-            source += " (edition-specific)"
-
-        candidate = PriceVariant(
+        selected[display_variant] = PriceVariant(
             card_id=card_id,
             card_name=card_name,
             set_id=set_id,
@@ -167,7 +105,10 @@ def build_price_variants(
                 value * fx.usd_to_gbp,
                 2,
             ),
-            source=source,
+            source=(
+                "Pokémon TCG API / TCGplayer "
+                "(primary market)"
+            ),
             source_date=tcg_date,
             source_url=tcg_url,
             original_price=value,
@@ -175,24 +116,87 @@ def build_price_variants(
             source_field=field,
         )
 
-        if (
-            edition_sensitive
-            and display_variant in {
-                "Normal",
-                "Holofoil",
-            }
-        ):
-            selected[display_variant] = candidate
-        elif display_variant not in selected:
-            selected[display_variant] = candidate
+    cardmarket = card.get("cardmarket") or {}
+    cardmarket_prices = (
+        cardmarket.get("prices") or {}
+    )
+    cardmarket_url = str(
+        cardmarket.get("url", "")
+    ).strip()
+    cardmarket_date = str(
+        cardmarket.get("updatedAt", "")
+    ).strip()
 
-    # Never use a broad Cardmarket trend to manufacture a standard price when
-    # a separate First Edition exists but TCGplayer has no standard value.
-    if edition_sensitive:
-        if "normal" not in tcg_prices:
-            selected.pop("Normal", None)
-        if "holofoil" not in tcg_prices:
-            selected.pop("Holofoil", None)
+    edition_sensitive = any(
+        key in tcg_prices
+        for key in (
+            "1stEditionNormal",
+            "1stEditionHolofoil",
+        )
+    )
+
+    # 2. Cardmarket is only a fallback for an exact variant with no TCG price.
+    if "Normal" not in selected and not edition_sensitive:
+        value, field = first_number(
+            cardmarket_prices,
+            config[
+                "cardmarket_normal_price_priority"
+            ],
+        )
+        if value is not None:
+            selected["Normal"] = PriceVariant(
+                card_id=card_id,
+                card_name=card_name,
+                set_id=set_id,
+                set_name=set_name,
+                card_number=number,
+                variant="Normal",
+                price_gbp=round(
+                    value * fx.eur_to_gbp,
+                    2,
+                ),
+                source=(
+                    "Pokémon TCG API / Cardmarket "
+                    "(fallback trend)"
+                ),
+                source_date=cardmarket_date,
+                source_url=cardmarket_url,
+                original_price=value,
+                original_currency="EUR",
+                source_field=field,
+            )
+
+    if "Reverse Holofoil" not in selected:
+        value, field = first_number(
+            cardmarket_prices,
+            config[
+                "cardmarket_reverse_price_priority"
+            ],
+        )
+        if value is not None:
+            selected[
+                "Reverse Holofoil"
+            ] = PriceVariant(
+                card_id=card_id,
+                card_name=card_name,
+                set_id=set_id,
+                set_name=set_name,
+                card_number=number,
+                variant="Reverse Holofoil",
+                price_gbp=round(
+                    value * fx.eur_to_gbp,
+                    2,
+                ),
+                source=(
+                    "Pokémon TCG API / Cardmarket "
+                    "(fallback trend)"
+                ),
+                source_date=cardmarket_date,
+                source_url=cardmarket_url,
+                original_price=value,
+                original_currency="EUR",
+                source_field=field,
+            )
 
     return sorted(
         selected.values(),

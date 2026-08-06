@@ -499,7 +499,7 @@ class ExcelAdapter:
         results: list[RadarResult],
     ) -> None:
         sheet = self.sheet("Live Opportunities")
-        sheet.Range("A5:BG1004").ClearContents()
+        sheet.Range("A5:BZ1004").ClearContents()
         try:
             sheet.Range("T5:AA1004").Hyperlinks.Delete()
         except Exception:
