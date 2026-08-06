@@ -6,25 +6,24 @@ set PYTHONUTF8=1
 set PYTHONUNBUFFERED=1
 
 echo ======================================================
-echo Phase 5.2 - Live Opportunity Radar + eBay Watchlist
+echo Phase 5.6.3.3 - Fast, Restart-Safe Live Radar
 echo ======================================================
 echo.
-echo Broad UK Pokemon auction radar:
-echo   - Ending inside the editable 2-minute to 24-hour window
-echo   - Exact card matching against the full market database
-echo   - Maximum-bid calculation
-echo   - Detailed condition warning
-echo   - GREEN seller expansion
-echo   - GREEN listings added to My eBay Watchlist
+echo Progress is displayed and saved in live-radar.log.
+echo Completed title matches and AI prices are checkpointed immediately.
+echo Repeated listings reuse the persistent local caches.
+echo The real workbook changes only after a fully successful run.
+echo Invalid AI valuations are retried or marked pending without stopping the scan.
+echo.
+echo You may press Ctrl+C to stop safely. If the window is closed directly,
+echo completed cache checkpoints still survive and the workbook stays safe.
 echo.
 echo Close Pokemon-Auction-Scanner-Dashboard.xlsx before continuing.
-echo Live progress appears below and is also saved in:
-echo live-radar.log
 echo.
 
 if not exist ".venv\Scripts\python.exe" (
     echo ERROR: Scanner Python environment was not found.
-    echo Run install-live-radar-upgrade.bat first.
+    echo Run the existing scanner installer first.
     goto :end
 )
 
@@ -39,11 +38,13 @@ set EXITCODE=%ERRORLEVEL%
 echo.
 echo Exit code: %EXITCODE%
 if "%EXITCODE%"=="0" (
-    echo SUCCESS: Open the workbook and review Live Opportunities.
+    echo SUCCESS: The completed workbook was committed safely.
 ) else if "%EXITCODE%"=="130" (
-    echo INTERRUPTED: The hidden Excel process was released.
+    echo INTERRUPTED SAFELY: Completed cache work was retained.
+    echo The existing workbook was not changed.
 ) else (
-    echo FAILED: Review live-radar.log and Scanner Log.
+    echo FAILED SAFELY: Review live-radar.log.
+    echo The existing workbook was not replaced by a partial run.
 )
 
 :end

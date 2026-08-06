@@ -1,0 +1,24 @@
+PHASE 5.6.3.2 INSTALLATION
+
+Prerequisite: Phase 5.6.3.1 must already be installed.
+
+1. Stop the current live radar. Ctrl+C is preferred, but the completed AI
+   prices already stored by Phase 5.6.3.1 remain in its SQLite cache.
+2. Close Excel completely.
+3. Copy every file in this add-on into the main PokemonCardTrading folder.
+4. Choose Replace files in destination.
+5. Run install-phase5.6.3.2-fast-restart-safe-live-radar.bat.
+6. Run run-live.bat normally.
+
+The first scan builds data\listing-identification-cache.sqlite. Each completed
+title identification is committed immediately. Later scans reuse unchanged
+eBay item IDs and titles. AI market prices continue to use the existing
+data\ai-market-price-cache.sqlite and configured 14-day lifetime.
+
+Shutdown safety:
+- Ctrl+C exits cleanly with code 130.
+- Closing the BAT directly may prevent the final message from appearing, but
+  already committed SQLite cache records survive.
+- The real Excel workbook is never used as the working copy. A staging copy is
+  committed only after the entire scan succeeds, so an interrupted scan cannot
+  overwrite the dashboard with a partial result set.

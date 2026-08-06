@@ -1,0 +1,18 @@
+PHASE 5.6.3.1 - AI MARKET PRICER RELIABILITY HOTFIX
+
+1. Close Excel.
+2. Copy every file from this folder into the existing PokemonCardTrading
+   project folder and choose Replace files in destination.
+3. Run install-phase5.6.3.1-ai-reliability-hotfix.bat.
+4. Run testAIMarketPricer.bat.
+5. If the test succeeds, run run-live.bat normally.
+
+This hotfix increases the structured-response budget, requests low reasoning
+effort on GPT-5 models, validates JSON text when the SDK does not populate
+output_parsed, retries one incomplete response, and prevents a single failed
+AI price from terminating the complete radar.
+
+The AI request cap now counts actual API requests. A retry consumes a second
+request. Cached prices remain usable after the cap is reached. Uncached cards
+that cannot be priced are skipped safely for financial decisions; their
+existing nonblank catalogue values remain unchanged in the workbook.

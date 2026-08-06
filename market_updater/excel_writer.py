@@ -197,11 +197,11 @@ def write_workbook(
         )
         market.Range(
             market.Cells(1, 1),
-            market.Cells(old_last, 19),
+            market.Cells(old_last, 28),
         ).ClearContents()
         market.Range(
             market.Cells(1, 1),
-            market.Cells(old_last, 19),
+            market.Cells(old_last, 28),
         ).ClearFormats()
 
         market_headers = [
@@ -233,7 +233,7 @@ def write_workbook(
             ),
             (
                 "Column H is the single market value used by Random, "
-                "Snipe, Live, Seller Radar, long-term scoring and AI. "
+                "Snipe, Live, Seller Radar and long-term scoring. "
                 "TCGplayer variant-specific market is primary; "
                 "Cardmarket trend is fallback only. Verified overrides "
                 "from Market Price Controls take priority."

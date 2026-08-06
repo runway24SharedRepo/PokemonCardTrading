@@ -4,13 +4,17 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import sys
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+
+from listing_identification_cache import ListingIdentificationCache
 
 from live_radar.condition import assess_condition
 from live_radar.core import (
@@ -366,6 +370,11 @@ def main() -> int:
 
     excel = None
     client = None
+    identification_cache = None
+    workbook_committed = False
+    staging_workbook_path = workbook_path.with_name(
+        f"{workbook_path.stem}.live-radar-staging{workbook_path.suffix}"
+    )
 
     broad_requests = 0
     raw_count = 0
@@ -379,7 +388,21 @@ def main() -> int:
                 f"Workbook not found: {workbook_path}"
             )
 
-        excel = ExcelAdapter(workbook_path)
+        logger.info(
+            "WORKBOOK SAFETY | creating an isolated staging copy; the real "
+            "dashboard will remain unchanged until the final successful commit."
+        )
+        try:
+            if staging_workbook_path.exists():
+                staging_workbook_path.unlink()
+            shutil.copy2(workbook_path, staging_workbook_path)
+        except PermissionError as exc:
+            raise RuntimeError(
+                "Could not prepare the staging workbook. Close every Excel "
+                "process, then run the radar again."
+            ) from exc
+
+        excel = ExcelAdapter(staging_workbook_path)
         settings = excel.read_settings()
 
         if not settings.enabled:
@@ -393,10 +416,15 @@ def main() -> int:
         )
         candidates = excel.read_candidates()
         matcher = CandidateTitleMatcher(candidates)
+        identification_cache = ListingIdentificationCache(root, candidates)
 
         logger.info(
             "Market database ready: %s priced card variants.",
             len(candidates),
+        )
+        logger.info(
+            "Persistent identification cache ready: %s saved listing title(s).",
+            identification_cache.total_rows(),
         )
         logger.info(
             "Radar window: %s minutes to %.1f hours.",
@@ -502,19 +530,36 @@ def main() -> int:
             ]
         ] = []
 
+        stage_started = time.monotonic()
+        last_progress = stage_started
+        cache_hits_at_start = identification_cache.hits
+
         for index, item in enumerate(
             broad_items.values(),
             start=1,
         ):
-            if index == 1 or index % 50 == 0:
+            now = time.monotonic()
+            if index == 1 or index % 50 == 0 or now - last_progress >= 10:
+                elapsed = max(0.001, now - stage_started)
+                rate = index / elapsed
+                remaining = max(0, unique_count - index)
+                eta_seconds = int(remaining / rate) if rate > 0 else 0
                 logger.info(
-                    "Card identification progress: %s/%s.",
+                    "IDENTIFY %s/%s | cache hits=%s | newly checkpointed=%s | "
+                    "matches=%s | %.1f listings/sec | ETA about %s min.",
                     index,
                     unique_count,
+                    identification_cache.hits - cache_hits_at_start,
+                    identification_cache.writes,
+                    len(matched),
+                    rate,
+                    max(0, (eta_seconds + 59) // 60),
                 )
+                last_progress = now
 
-            candidate, score, _ = matcher.match(
-                str(item.get("title", "") or ""),
+            candidate, score, _, _ = identification_cache.match(
+                matcher,
+                item,
                 exclusions,
             )
             if candidate is not None:
@@ -523,9 +568,18 @@ def main() -> int:
                 )
 
         logger.info(
-            "Exact database matches: %s/%s.",
+            "IDENTIFICATION COMPLETE | exact matches=%s/%s | cache hits=%s | "
+            "new durable checkpoints=%s | elapsed=%.1f sec.",
             len(matched),
             unique_count,
+            identification_cache.hits - cache_hits_at_start,
+            identification_cache.writes,
+            time.monotonic() - stage_started,
+        )
+
+        logger.info(
+            "MARKET PRICING | using the free Pokémon TCG market values already "
+            "stored in Market Data Import; no AI pricing requests are used."
         )
 
         primary_results: list[RadarResult] = []
@@ -690,12 +744,19 @@ def main() -> int:
                     ):
                         continue
 
-                    candidate, match_score, _ = matcher.match(
-                        str(item.get("title", "") or ""),
+                    candidate, match_score, _, cache_hit = identification_cache.match(
+                        matcher,
+                        item,
                         exclusions,
                     )
                     if candidate is None:
                         continue
+
+                    logger.info(
+                        "SELLER LISTING | %s | identification=%s | using TCG market price.",
+                        item_id,
+                        "cache" if cache_hit else "new checkpoint",
+                    )
 
                     condition = assess_condition(item)
                     provisional = evaluate_listing(
@@ -837,6 +898,14 @@ def main() -> int:
             long_term_update.get("portfolio_rows", 0),
         )
         excel.save()
+        excel.close(save=True)
+        excel = None
+        os.replace(staging_workbook_path, workbook_path)
+        workbook_committed = True
+        logger.info(
+            "WORKBOOK COMMIT | completed staging workbook safely replaced "
+            "the previous dashboard."
+        )
 
         logger.info("LIVE OPPORTUNITY RADAR SUCCESSFUL.")
         logger.info(
@@ -857,7 +926,6 @@ def main() -> int:
             seller_searches,
             condition_checks,
         )
-
         print()
         print("LIVE OPPORTUNITY RADAR SUCCESSFUL")
         print(f"Broad search requests: {broad_requests}")
@@ -884,44 +952,31 @@ def main() -> int:
 
     except KeyboardInterrupt:
         logger.warning(
-            "Interrupted by user. Releasing the hidden Excel process..."
+            "Interrupted by user. Completed title identifications are already "
+            "checkpointed; the workbook was not changed."
         )
-        if excel is not None:
-            try:
-                excel.append_log(
-                    broad_requests,
-                    raw_count,
-                    unique_count,
-                    0,
-                    0,
-                    "Run interrupted by user; no completed result set saved.",
-                    success=False,
-                )
-            except Exception:
-                pass
         return 130
 
     except Exception as exc:
         logger.exception("LIVE RADAR FAILED: %s", exc)
-        if excel is not None:
-            try:
-                excel.append_log(
-                    broad_requests,
-                    raw_count,
-                    unique_count,
-                    0,
-                    0,
-                    repr(exc),
-                    success=False,
-                )
-                excel.save()
-            except Exception:
-                pass
         return 1
 
     finally:
+        if identification_cache is not None:
+            identification_cache.close()
         if excel is not None:
-            excel.close(save=True)
+            excel.close(save=workbook_committed)
+        if (
+            not workbook_committed
+            and staging_workbook_path.exists()
+            and excel is None
+        ):
+            # A fully closed but uncommitted staging copy can remain only when
+            # the final replacement failed. Preserve it for manual recovery.
+            logger.warning(
+                "A completed/uncommitted staging workbook remains at: %s",
+                staging_workbook_path,
+            )
 
 
 if __name__ == "__main__":

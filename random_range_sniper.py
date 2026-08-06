@@ -476,6 +476,10 @@ def main() -> int:
         excel = ExcelAdapter(workbook_path)
         settings = excel.read_settings()
         candidates = excel.read_candidates()
+        logger.info(
+            "MARKET PRICING | using the free Pokémon TCG market values already "
+            "stored in Market Data Import; no AI pricing requests are used."
+        )
 
         if settings.minimum_value > settings.maximum_value:
             raise RuntimeError(
