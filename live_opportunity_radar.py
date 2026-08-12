@@ -36,6 +36,7 @@ from live_radar.ebay_client import (
 )
 from live_radar.excel_adapter import ExcelAdapter
 from ebay_watchlist import sync_green_results
+from on_demand_pricing import OnDemandPriceResolver
 
 
 def configure_logging(root: Path) -> logging.Logger:
@@ -254,6 +255,14 @@ def evaluate_listing(
         )
     if minutes_remaining <= 5:
         notes.append("LAST-MINUTE AUCTION.")
+    notes.append(
+        "Valuation: Cardmarket 30-day average fetched on demand"
+        + (
+            f"; provider updated {candidate.source_date}."
+            if candidate.source_date
+            else "."
+        )
+    )
 
     return RadarResult(
         candidate=candidate,
@@ -371,6 +380,7 @@ def main() -> int:
     excel = None
     client = None
     identification_cache = None
+    price_resolver = None
     workbook_committed = False
     staging_workbook_path = workbook_path.with_name(
         f"{workbook_path.stem}.live-radar-staging{workbook_path.suffix}"
@@ -412,16 +422,17 @@ def main() -> int:
             return 0
 
         logger.info(
-            "Loading full market database from Excel..."
+            "Loading card identities from Excel..."
         )
         candidates = excel.read_candidates()
         matcher = CandidateTitleMatcher(candidates)
         identification_cache = ListingIdentificationCache(root, candidates)
 
         logger.info(
-            "Market database ready: %s priced card variants.",
+            "Card identity index ready: %s card variants; stored prices ignored.",
             len(candidates),
         )
+        price_resolver = OnDemandPriceResolver(root, logger)
         logger.info(
             "Persistent identification cache ready: %s saved listing title(s).",
             identification_cache.total_rows(),
@@ -578,8 +589,20 @@ def main() -> int:
         )
 
         logger.info(
-            "MARKET PRICING | using the free Pokémon TCG market values already "
-            "stored in Market Data Import; no AI pricing requests are used."
+            "ON-DEMAND PRICING | each unique matched card is fetched from the "
+            "Pokemon TCG API or its valid 24-hour checkpoint; Cardmarket "
+            "avg30 is the only valuation field."
+        )
+        price_resolver.set_expected_quotes(
+            len(
+                {
+                    (
+                        candidate.card_id.casefold(),
+                        candidate.variant.casefold(),
+                    )
+                    for candidate, _, _ in matched
+                }
+            )
         )
 
         primary_results: list[RadarResult] = []
@@ -589,6 +612,9 @@ def main() -> int:
             match_score,
             item,
         ) in enumerate(matched, start=1):
+            quote = price_resolver.apply(candidate)
+            if not quote.available:
+                continue
             summary_condition = assess_condition(item)
             condition = summary_condition
 
@@ -752,8 +778,13 @@ def main() -> int:
                     if candidate is None:
                         continue
 
+                    quote = price_resolver.apply(candidate)
+                    if not quote.available:
+                        continue
+
                     logger.info(
-                        "SELLER LISTING | %s | identification=%s | using TCG market price.",
+                        "SELLER LISTING | %s | identification=%s | "
+                        "Cardmarket 30-day average fetched on demand.",
                         item_id,
                         "cache" if cache_hit else "new checkpoint",
                     )
@@ -926,6 +957,7 @@ def main() -> int:
             seller_searches,
             condition_checks,
         )
+        logger.info("ON-DEMAND PRICING | %s", price_resolver.summary())
         print()
         print("LIVE OPPORTUNITY RADAR SUCCESSFUL")
         print(f"Broad search requests: {broad_requests}")
@@ -948,6 +980,7 @@ def main() -> int:
             f"{budget.maximum_calls}"
         )
         print(f"eBay Watchlist: {watchlist_summary.display}")
+        print(f"On-demand pricing: {price_resolver.summary()}")
         return 0
 
     except KeyboardInterrupt:
@@ -962,6 +995,8 @@ def main() -> int:
         return 1
 
     finally:
+        if price_resolver is not None:
+            price_resolver.close()
         if identification_cache is not None:
             identification_cache.close()
         if excel is not None:

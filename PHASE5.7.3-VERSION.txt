@@ -1,0 +1,5 @@
+Phase 5.7.3
+
+Windows SQLite cleanup correction for the stale-cache regression test.
+Resumable on-demand Cardmarket 30-day average pricing cache
+Built 2026-08-07

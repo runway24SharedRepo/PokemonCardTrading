@@ -1,0 +1,13 @@
+Pokemon Auction Scanner Phase 5.7.4
+Transient Pokemon TCG API Retry Recovery
+
+- Retries transient HTTP 429/500/502/503/504 and connection failures up to
+  three attempts per card.
+- Uses short exponential backoff with jitter.
+- Emits one warning only after all attempts fail.
+- Successful retry results are cached for 24 hours like first-attempt results.
+- Failed cards become eligible again after 60 seconds by default.
+- Installer clears old failure checkpoints but preserves successful prices.
+- Summary separates retry calls, retry recoveries and final failures.
+- Pricing authority remains Cardmarket avg30/reverseHoloAvg30 embedded in the
+  Pokemon TCG API response, with no static workbook fallback.

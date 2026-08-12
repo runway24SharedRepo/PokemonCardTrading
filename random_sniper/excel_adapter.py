@@ -399,13 +399,6 @@ class ExcelAdapter:
             language = str(row[5] or "").strip()
             if language and language.casefold() != "english":
                 continue
-            try:
-                market_value = float(row[7] or 0)
-            except (TypeError, ValueError):
-                continue
-            if market_value <= 0:
-                continue
-
             key = (
                 name.casefold(),
                 set_name.casefold(),
@@ -424,10 +417,13 @@ class ExcelAdapter:
                     set_name=set_name,
                     number=number,
                     variant=variant,
-                    market_value=market_value,
-                    source=str(row[8] or ""),
-                    source_date=row[9],
-                    source_url=str(row[10] or ""),
+                    # Column H is no longer a price authority. The runtime
+                    # pricing service fills these fields after exact listing
+                    # identification.
+                    market_value=0.0,
+                    source="",
+                    source_date=None,
+                    source_url="",
                     rarity=str(details.get("rarity", "") or ""),
                     supertype=str(details.get("supertype", "") or ""),
                     release_date=details.get("release_date"),

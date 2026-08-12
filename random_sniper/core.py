@@ -816,11 +816,13 @@ def eligible_candidates(
     now: datetime,
     vintage_cutoff_year: int,
     modern_start_year: int,
+    *,
+    ignore_market_value: bool = False,
 ) -> list[Candidate]:
     output: list[Candidate] = []
 
     for candidate in candidates:
-        if not (
+        if not ignore_market_value and not (
             settings.minimum_value
             <= candidate.market_value
             <= settings.maximum_value

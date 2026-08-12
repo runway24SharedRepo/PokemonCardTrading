@@ -43,7 +43,7 @@ def export_latest_files(
         "Regulation Mark",
         "Evolves From",
         "Evolves To",
-        "Best Market GBP",
+        "Best 30-Day Average Selling Price GBP",
         "Best Variant",
         "Best Source",
         "Image URL",
@@ -97,7 +97,7 @@ def export_latest_files(
         "Variant",
         "Language",
         "Condition",
-        "Market Value (£)",
+        "Average Selling Price (£)",
         "Source",
         "Source Date",
         "Source URL",
@@ -112,7 +112,7 @@ def export_latest_files(
             price.card_number,
             price.variant,
             "English",
-            "Market reference",
+            "Average selling price",
             price.price_gbp,
             price.source,
             price.source_date,
@@ -120,7 +120,7 @@ def export_latest_files(
             (
                 f"{price.original_currency} {price.original_price:.2f} "
                 f"{price.source_field}; converted to GBP. "
-                "Verify exact condition and printing before bidding."
+                "30-day average; verify exact condition and printing before bidding."
             ),
             price.card_id,
         ]

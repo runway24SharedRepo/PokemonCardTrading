@@ -37,6 +37,7 @@ from random_sniper.seller_discovery import (
     group_queue_results,
 )
 from ebay_watchlist import sync_green_results
+from on_demand_pricing import OnDemandPriceResolver
 
 
 def configure_logging(root: Path) -> logging.Logger:
@@ -338,6 +339,14 @@ def evaluate_item(
             "Auction is outside the configured sniping window of "
             f"{settings.ending_within_hours:g} hours"
         )
+    notes_parts.append(
+        "Valuation: Cardmarket 30-day average fetched on demand"
+        + (
+            f"; provider updated {candidate.source_date}"
+            if candidate.source_date
+            else ""
+        )
+    )
 
     return ListingResult(
         candidate=candidate,
@@ -460,6 +469,7 @@ def main() -> int:
 
     client = None
     excel = None
+    price_resolver = None
 
     try:
         if args.test_api:
@@ -476,9 +486,12 @@ def main() -> int:
         excel = ExcelAdapter(workbook_path)
         settings = excel.read_settings()
         candidates = excel.read_candidates()
+        price_resolver = OnDemandPriceResolver(root, logger)
+        price_resolver.set_expected_quotes(settings.maximum_attempts)
         logger.info(
-            "MARKET PRICING | using the free Pokémon TCG market values already "
-            "stored in Market Data Import; no AI pricing requests are used."
+            "ON-DEMAND PRICING | stored workbook prices are ignored; each "
+            "selected/matched card uses Cardmarket avg30 from a live Pokemon "
+            "TCG API response or a valid 24-hour checkpoint."
         )
 
         if settings.minimum_value > settings.maximum_value:
@@ -493,9 +506,11 @@ def main() -> int:
             now,
             int(config["vintage_cutoff_year"]),
             int(config["modern_start_year"]),
+            ignore_market_value=True,
         )
         logger.info(
-            "Eligible candidate pool: %s cards/variants between £%.2f and £%.2f",
+            "Eligible identity pool: %s cards/variants; live prices will be "
+            "checked against £%.2f-£%.2f on demand",
             len(eligible),
             settings.minimum_value,
             settings.maximum_value,
@@ -520,9 +535,18 @@ def main() -> int:
             selected = select_candidates(
                 eligible,
                 settings,
-                count=settings.number_of_cards,
+                count=min(settings.maximum_attempts, len(eligible)),
             )
             for candidate in selected:
+                quote = price_resolver.apply(candidate)
+                if not quote.available:
+                    continue
+                if not (
+                    settings.minimum_value
+                    <= candidate.market_value
+                    <= settings.maximum_value
+                ):
+                    continue
                 query = build_queries(candidate, settings.search_depth)[0]
                 attempts.append(
                     {
@@ -539,6 +563,8 @@ def main() -> int:
                         "notes": "Rerolled without contacting eBay.",
                     }
                 )
+                if len(attempts) >= settings.number_of_cards:
+                    break
             excel.write_selected_cards(attempts)
             excel.update_kpis(
                 run_id,
@@ -555,6 +581,7 @@ def main() -> int:
             excel.append_history(run_id, settings, attempts)
             excel.save()
             logger.info("Reroll complete: %s cards selected.", len(attempts))
+            logger.info("ON-DEMAND PRICING | %s", price_resolver.summary())
             return 0
 
         client = EbayBrowseClient(
@@ -599,6 +626,48 @@ def main() -> int:
 
             candidate = next_pick[0]
             used_identities.add(candidate.identity)
+            quote = price_resolver.apply(candidate)
+            if not quote.available:
+                attempts.append(
+                    {
+                        "candidate": candidate,
+                        "status": "PRICE UNAVAILABLE",
+                        "queries_run": 0,
+                        "listings_found": 0,
+                        "results": [],
+                        "best_result": None,
+                        "target_ratio": settings.target_ratio,
+                        "active_search_url": "",
+                        "buy_now_search_url": "",
+                        "sold_search_url": "",
+                        "notes": quote.reason or quote.status,
+                    }
+                )
+                continue
+            if not (
+                settings.minimum_value
+                <= candidate.market_value
+                <= settings.maximum_value
+            ):
+                attempts.append(
+                    {
+                        "candidate": candidate,
+                        "status": "OUTSIDE LIVE PRICE RANGE",
+                        "queries_run": 0,
+                        "listings_found": 0,
+                        "results": [],
+                        "best_result": None,
+                        "target_ratio": settings.target_ratio,
+                        "active_search_url": "",
+                        "buy_now_search_url": "",
+                        "sold_search_url": "",
+                        "notes": (
+                            f"Fresh 30-day average £{candidate.market_value:.2f} "
+                            "is outside the configured range."
+                        ),
+                    }
+                )
+                continue
             queries = build_queries(candidate, settings.search_depth)
             exact_query = queries[0]
             active_url = ebay_auction_search_url(exact_query)
@@ -807,6 +876,14 @@ def main() -> int:
                     ):
                         continue
 
+                    quote = price_resolver.apply(candidate)
+                    if not quote.available or not (
+                        settings.minimum_value
+                        <= candidate.market_value
+                        <= settings.maximum_value
+                    ):
+                        continue
+
                     exact_query = build_queries(candidate, "Fast")[0]
                     evaluated = evaluate_item(
                         candidate,
@@ -936,6 +1013,7 @@ def main() -> int:
             "Seller opportunities added: %s",
             seller_opportunities_added,
         )
+        logger.info("ON-DEMAND PRICING | %s", price_resolver.summary())
         logger.info("GREEN rows copied to Snipe Queue: %s", copied)
         print()
         print("RANDOM RANGE SNIPER SUCCESSFUL")
@@ -954,9 +1032,12 @@ def main() -> int:
             "Queue GREEN opportunities: "
             f"{sum(item.decision == 'GREEN' for item in random_queue)}"
         )
+        print(f"On-demand pricing: {price_resolver.summary()}")
         return 0
 
     finally:
+        if price_resolver is not None:
+            price_resolver.close()
         if client is not None:
             client.close()
         if excel is not None:

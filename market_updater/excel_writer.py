@@ -147,6 +147,7 @@ def write_workbook(
     backup_folder: Path,
     cards: list[dict[str, Any]],
     prices: list[PriceVariant],
+    market_records: list[PriceVariant],
     variants_by_card: dict[str, list[PriceVariant]],
     changes: list[dict[str, Any]],
     fx: FxRates,
@@ -160,6 +161,11 @@ def write_workbook(
         )
 
     backup_path = _backup_workbook(workbook_path, backup_folder)
+    staging_path = workbook_path.with_name(
+        f"{workbook_path.stem}.market-update-staging{workbook_path.suffix}"
+    )
+    staging_path.unlink(missing_ok=True)
+    shutil.copy2(workbook_path, staging_path)
 
     import win32com.client
 
@@ -169,8 +175,9 @@ def write_workbook(
     excel.ScreenUpdating = False
     excel.EnableEvents = False
 
-    workbook = excel.Workbooks.Open(str(workbook_path.resolve()))
+    workbook = excel.Workbooks.Open(str(staging_path.resolve()))
     manual_rows_backed_up = 0
+    result: dict[str, Any] | None = None
 
     try:
         if config.get("backup_existing_market_rows", True):
@@ -212,17 +219,24 @@ def write_workbook(
             "Variant",
             "Language",
             "Condition",
-            "Market Value (£)",
+            "Average Selling Price (£)",
             "Source",
             "Source Date",
             "Source URL",
             "Notes",
             "Card ID",
-            "Base Imported Value (£)",
+            "Set Code",
+            "Finish",
+            "Edition",
+            "Variant Identity Source",
+            "Cardmarket 30-Day Average EUR",
+            "EUR to GBP",
+            "Base Average Selling Price (£)",
             "Base Imported Source",
             "Override Value (£)",
             "Override Source",
-            "Price Status",
+            "Match Status",
+            "Available Cardmarket Average Fields",
             "Last Synced",
         ]
         _style_title(
@@ -232,11 +246,13 @@ def write_workbook(
                 "Authoritative Scanner Values"
             ),
             (
-                "Column H is the single market value used by Random, "
-                "Snipe, Live, Seller Radar and long-term scoring. "
-                "TCGplayer variant-specific market is primary; "
-                "Cardmarket trend is fallback only. Verified overrides "
-                "from Market Price Controls take priority."
+                "Column H is the single average selling price used "
+                "by Random, Snipe, Live, Seller Radar and long-term scoring. "
+                "The base value is only Cardmarket avg30 for the standard "
+                "Unlimited finish or reverseHoloAvg30 for Reverse "
+                "Holofoil. Missing or ambiguous averages remain "
+                "blank. Verified Market Price Controls overrides retain "
+                "priority."
             ),
             len(market_headers),
         )
@@ -257,49 +273,98 @@ def write_workbook(
 
         market_rows = []
         override_count = 0
-        fallback_count = 0
+        unavailable_count = 0
 
-        for price in prices:
-            effective = resolve_effective_value(
-                price,
-                market_controls,
+        for price in market_records:
+            control = market_controls.get(
+                (
+                    price.card_id.strip().casefold(),
+                    price.variant.strip().casefold(),
+                )
             )
-            if (
-                effective.override_value_gbp
-                is not None
-            ):
+
+            if price.has_market_price:
+                effective = resolve_effective_value(price, market_controls)
+                effective_value = effective.effective_value_gbp
+                effective_source = effective.effective_source
+                effective_date = effective.effective_source_date
+                effective_url = effective.effective_source_url
+                base_value = effective.base_value_gbp
+                base_source = effective.base_source
+                override_value = effective.override_value_gbp
+                override_source = effective.override_source
+                status = (
+                    effective.price_status
+                    if effective.override_value_gbp is not None
+                    else price.match_status
+                )
+                notes = " ".join(
+                    value for value in (price.notes, effective.notes) if value
+                )
+            elif control is not None:
                 override_count += 1
-            if (
-                effective.price_status
-                == "CARDMARKET FALLBACK"
-            ):
-                fallback_count += 1
+                effective_value = control.override_value_gbp
+                effective_source = control.override_source or "Manual Verified"
+                effective_date = control.source_date
+                effective_url = control.source_url
+                base_value = ""
+                base_source = price.source
+                override_value = control.override_value_gbp
+                override_source = effective_source
+                status = "VERIFIED OVERRIDE — BASE PRICE UNAVAILABLE"
+                notes = " ".join(
+                    value
+                    for value in (
+                        price.notes,
+                        "Exact Cardmarket average unavailable; verified manual "
+                        "control supplies the scanner value.",
+                        control.notes,
+                    )
+                    if value
+                )
+            else:
+                unavailable_count += 1
+                effective_value = ""
+                effective_source = price.source
+                effective_date = price.source_date
+                effective_url = price.source_url
+                base_value = ""
+                base_source = price.source
+                override_value = ""
+                override_source = ""
+                status = price.match_status
+                notes = price.notes
+
+            if price.has_market_price and override_value not in (None, ""):
+                override_count += 1
 
             market_rows.append(
                 [
-                    "YES",
+                    "YES" if effective_value not in (None, "") else "NO",
                     price.card_name,
                     price.set_name,
                     price.card_number,
                     price.variant,
                     "English",
-                    "Market reference",
-                    effective.effective_value_gbp,
-                    effective.effective_source,
-                    effective.effective_source_date,
-                    effective.effective_source_url,
-                    effective.notes,
+                    "Average selling price",
+                    effective_value,
+                    effective_source,
+                    effective_date,
+                    effective_url,
+                    notes,
                     price.card_id,
-                    effective.base_value_gbp,
-                    effective.base_source,
-                    (
-                        effective.override_value_gbp
-                        if effective.override_value_gbp
-                        is not None
-                        else ""
-                    ),
-                    effective.override_source,
-                    effective.price_status,
+                    price.set_id,
+                    price.finish,
+                    price.edition,
+                    price.selected_price_category,
+                    price.original_price if price.original_price is not None else "",
+                    price.exchange_rate_to_gbp,
+                    base_value,
+                    base_source,
+                    override_value if override_value is not None else "",
+                    override_source,
+                    status,
+                    price.available_variants,
                     sync_metadata["synced_at"],
                 ]
             )
@@ -317,8 +382,9 @@ def write_workbook(
 
         widths = [
             9, 25, 25, 12, 22, 11, 18,
-            15, 34, 14, 48, 60, 18, 20,
-            34, 18, 25, 23, 20,
+            18, 34, 14, 48, 60, 18, 13, 18,
+            18, 34, 18, 14, 20, 34, 18, 25,
+            30, 54, 20,
         ]
         for index, width in enumerate(
             widths,
@@ -335,24 +401,30 @@ def write_workbook(
             f"H5:H{market_last}"
         ).NumberFormat = "£0.00"
         market.Range(
-            f"N5:N{market_last}"
+            f"R5:R{market_last}"
+        ).NumberFormat = "€0.00"
+        market.Range(
+            f"S5:S{market_last}"
+        ).NumberFormat = "0.000000"
+        market.Range(
+            f"T5:T{market_last}"
         ).NumberFormat = "£0.00"
         market.Range(
-            f"P5:P{market_last}"
+            f"V5:V{market_last}"
         ).NumberFormat = "£0.00"
         market.Range(
             f"J5:J{market_last}"
         ).NumberFormat = "yyyy-mm-dd"
         market.Range(
-            f"S5:S{market_last}"
+            f"Z5:Z{market_last}"
         ).NumberFormat = (
             "yyyy-mm-dd hh:mm"
         )
         market.Range(
-            f"A5:S{market_last}"
+            f"A5:Z{market_last}"
         ).VerticalAlignment = -4160
         market.Range(
-            f"B5:S{market_last}"
+            f"B5:Z{market_last}"
         ).WrapText = True
         _set_freeze_and_filter(
             excel,
@@ -388,21 +460,27 @@ def write_workbook(
             "Regulation Mark",
             "Evolves From",
             "Evolves To",
-            "TCGplayer Updated",
-            "Normal Market USD",
-            "Holo Market USD",
-            "Reverse Market USD",
-            "1st Ed Normal USD",
-            "1st Ed Holo USD",
             "Cardmarket Updated",
-            "Cardmarket Trend EUR",
-            "Cardmarket Reverse EUR",
-            "Best Market GBP",
+            "Average Sell EUR",
+            "Reverse Holo Sell EUR",
+            "Average 1 Day EUR",
+            "Average 7 Day EUR",
+            "Average 30 Day EUR",
+            "Reverse Average 1 Day EUR",
+            "Reverse Average 7 Day EUR",
+            "Reverse Average 30 Day EUR",
+            "Best 30-Day Average Selling Price GBP",
             "Best Variant",
             "Best Source",
             "Card Image URL",
             "Source URL",
             "Last Synced",
+            "Available Cardmarket Average Fields",
+            "Priced Variants",
+            "Unavailable / Ambiguous Variants",
+            "EUR to GBP",
+            "30-Day Average Selling Price Policy",
+            "Variant Match Status",
         ]
         old_last = max(5, _last_used_row(database, 1))
         database.Range(
@@ -434,16 +512,28 @@ def write_workbook(
             card_id = str(card.get("id", ""))
             set_info = card.get("set") or {}
             images = card.get("images") or {}
-            tcg = card.get("tcgplayer") or {}
-            tcg_prices = tcg.get("prices") or {}
             cm = card.get("cardmarket") or {}
             cm_prices = cm.get("prices") or {}
             card_variants = variants_by_card.get(card_id, [])
             best_price, best_variant, best_source = best_price_summary(card_variants)
-
-            def tcg_market(api_variant: str):
-                values = tcg_prices.get(api_variant) or {}
-                return values.get("market")
+            priced_categories = " | ".join(
+                variant.selected_price_category
+                for variant in card_variants
+                if variant.has_market_price
+            )
+            unavailable_categories = " | ".join(
+                variant.selected_price_category or "(none returned)"
+                for variant in card_variants
+                if not variant.has_market_price
+            )
+            match_statuses = " | ".join(
+                sorted({variant.match_status for variant in card_variants})
+            )
+            available_summary = (
+                card_variants[0].available_variants
+                if card_variants
+                else "No Cardmarket average fields returned"
+            )
 
             database_rows.append(
                 [
@@ -464,21 +554,30 @@ def write_workbook(
                     card.get("regulationMark", ""),
                     card.get("evolvesFrom", ""),
                     " | ".join(card.get("evolvesTo") or []),
-                    tcg.get("updatedAt", ""),
-                    tcg_market("normal"),
-                    tcg_market("holofoil"),
-                    tcg_market("reverseHolofoil"),
-                    tcg_market("1stEditionNormal"),
-                    tcg_market("1stEditionHolofoil"),
                     cm.get("updatedAt", ""),
-                    cm_prices.get("trendPrice"),
-                    cm_prices.get("reverseHoloTrend"),
+                    cm_prices.get("averageSellPrice"),
+                    cm_prices.get("reverseHoloSell"),
+                    cm_prices.get("avg1"),
+                    cm_prices.get("avg7"),
+                    cm_prices.get("avg30"),
+                    cm_prices.get("reverseHoloAvg1"),
+                    cm_prices.get("reverseHoloAvg7"),
+                    cm_prices.get("reverseHoloAvg30"),
                     best_price,
                     best_variant,
                     best_source,
                     images.get("large", ""),
-                    cm.get("url") or tcg.get("url") or "",
+                    cm.get("url") or "",
                     sync_metadata["synced_at"],
+                    available_summary,
+                    priced_categories,
+                    unavailable_categories,
+                    fx.eur_to_gbp,
+                    (
+                        "cardmarket.prices.avg30 or "
+                        "reverseHoloAvg30 only"
+                    ),
+                    match_statuses,
                 ]
             )
 
@@ -509,12 +608,17 @@ def write_workbook(
         database.Columns("AC").ColumnWidth = 29
         database.Columns("AD:AE").ColumnWidth = 48
         database.Columns("AF").ColumnWidth = 20
+        database.Columns("AG").ColumnWidth = 56
+        database.Columns("AH:AI").ColumnWidth = 32
+        database.Columns("AJ").ColumnWidth = 14
+        database.Columns("AK").ColumnWidth = 46
+        database.Columns("AL").ColumnWidth = 42
         database.Range(f"F5:F{db_last}").NumberFormat = "@"
         database.Range(f"N5:N{db_last}").NumberFormat = "yyyy-mm-dd"
-        database.Range(f"S5:W{db_last}").NumberFormat = '$0.00'
-        database.Range(f"Y5:Z{db_last}").NumberFormat = '€0.00'
+        database.Range(f"S5:Z{db_last}").NumberFormat = '€0.00'
         database.Range(f"AA5:AA{db_last}").NumberFormat = '£0.00'
-        database.Range(f"A5:AF{db_last}").VerticalAlignment = -4160
+        database.Range(f"AJ5:AJ{db_last}").NumberFormat = "0.000000"
+        database.Range(f"A5:AL{db_last}").VerticalAlignment = -4160
         _set_freeze_and_filter(excel, database, 4, db_last, len(database_headers))
 
         # -------------------------------------------------------------
@@ -552,7 +656,7 @@ def write_workbook(
 
         _style_title(
             changes_sheet,
-            "Daily Pokémon Market Price Changes",
+            "Daily Pokémon Average Selling Price Changes",
             (
                 "Compares the latest prices with the previous successful run. "
                 "The first run creates a baseline and therefore has no changes."
@@ -631,30 +735,21 @@ def write_workbook(
             6,
         )
 
-        cardmarket_count = sum(
-            1
-            for price in prices
-            if "Cardmarket" in price.source
-        )
-        tcg_count = sum(
-            1
-            for price in prices
-            if "TCGplayer" in price.source
-        )
+        average_count = len(prices)
         kpis = [
             ["Metric", "Value", "Meaning"],
             ["Last successful refresh", sync_metadata["synced_at"], "Local completion time"],
             ["English cards downloaded", len(cards), "One record per API card ID"],
             ["Priced variants imported", len(prices), "Rows written to Market Data Import"],
             [
-                "TCGplayer primary variants",
-                tcg_count,
-                "Variant-specific market values",
+                "Cardmarket 30-day average variants",
+                average_count,
+                "Only avg30 or reverseHoloAvg30",
             ],
             [
-                "Cardmarket fallback variants",
-                cardmarket_count,
-                "Used only when exact TCGplayer variant is unavailable",
+                "Unavailable / ambiguous variants",
+                unavailable_count,
+                "Visible for review; excluded from scanner decisions",
             ],
             [
                 "Verified overrides applied",
@@ -667,24 +762,24 @@ def write_workbook(
                 "Compared with previous successful run",
             ],
             ["EUR → GBP rate", fx.eur_to_gbp, fx.source],
-            ["USD → GBP rate", fx.usd_to_gbp, fx.source],
             ["FX rate date", fx.rate_date, "Reference-rate date"],
             ["API key used", "YES" if sync_metadata["api_key_used"] else "NO", "Free key is recommended for faster updates"],
             ["API pages downloaded", sync_metadata["pages"], "Pagination requests"],
             ["Original market rows backed up", manual_rows_backed_up, "Stored in Market Data Manual Backup"],
             ["Workbook backup", str(backup_path), "Created before Excel changes"],
         ]
-        summary.Range("A4:C19").Value = tuple(tuple(row) for row in kpis)
+        summary_last = 3 + len(kpis)
+        summary.Range(f"A4:C{summary_last}").Value = tuple(tuple(row) for row in kpis)
         _style_header(summary, 4, 3)
-        summary.Range("A5:A19").Font.Bold = True
-        summary.Range("A5:A19").Interior.Color = 0xD9EAF7
-        summary.Range("B5:B19").Interior.Color = 0xE2F0D9
+        summary.Range(f"A5:A{summary_last}").Font.Bold = True
+        summary.Range(f"A5:A{summary_last}").Interior.Color = 0xD9EAF7
+        summary.Range(f"B5:B{summary_last}").Interior.Color = 0xE2F0D9
         summary.Columns("A").ColumnWidth = 31
         summary.Columns("B").ColumnWidth = 58
         summary.Columns("C").ColumnWidth = 52
-        summary.Range("B11:B12").NumberFormat = "0.000000"
-        summary.Range("A4:C19").WrapText = True
-        summary.Rows("5:19").RowHeight = 24
+        summary.Range("B12:B12").NumberFormat = "0.000000"
+        summary.Range(f"A4:C{summary_last}").WrapText = True
+        summary.Rows(f"5:{summary_last}").RowHeight = 24
 
         # -------------------------------------------------------------
         # Price Import Log append
@@ -715,28 +810,33 @@ def write_workbook(
                 sync_metadata["synced_at"],
                 "Pokémon TCG API v2",
                 len(cards),
-                len(prices),
-                len(cards) - len(variants_by_card),
+                len(market_records),
+                unavailable_count,
                 0,
-                "TCGplayer primary + Cardmarket fallback + verified overrides",
+                "Cardmarket 30-day average selling price + verified overrides",
                 (
                     f"Full daily sync; {len(changes)} price changes; "
                     f"EUR/GBP {fx.eur_to_gbp:.6f}; "
-                    f"USD/GBP {fx.usd_to_gbp:.6f}"
+                    "avg30/reverseHoloAvg30 only"
                 ),
             ),
         )
 
         workbook.Save()
-        return {
+        result = {
             "backup_path": str(backup_path),
             "manual_rows_backed_up": manual_rows_backed_up,
-            "market_rows_written": len(prices),
+            "market_rows_written": len(market_records),
             "database_rows_written": len(cards),
             "changes_written": len(display_changes),
         }
     finally:
-        workbook.Close(SaveChanges=True)
+        workbook.Close(SaveChanges=False)
         excel.EnableEvents = True
         excel.ScreenUpdating = True
         excel.Quit()
+
+    if result is None:
+        raise RuntimeError("Workbook update did not produce a completed result.")
+    staging_path.replace(workbook_path)
+    return result

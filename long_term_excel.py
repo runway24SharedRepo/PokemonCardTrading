@@ -307,7 +307,7 @@ class LongTermWorkbookManager:
         sheet, _ = self._get_or_add_sheet(self.HISTORY_SHEET)
         headers = [
             "Snapshot Date", "Source Mode", "Card ID", "Card Name", "Set", "Card Number",
-            "Variant", "Market Value (£)", "Long-Term Score", "Investment Tier",
+            "Variant", "30-Day Average (£)", "Long-Term Score", "Investment Tier",
             "Data Confidence", "Best Observed Delivered (£)", "Best Observed Ratio",
             "Condition Flag", "Listings Observed", "Seller", "Item ID", "Snapshot Key",
         ]
@@ -713,7 +713,12 @@ class LongTermWorkbookManager:
             candidate = candidate_map.get(key) or loose_map.get("|".join(normalize_text(value) for value in (name, set_name, number)))
             if candidate is None:
                 continue
-            sheet.Cells(row, 13).Value = float(getattr(candidate, "market_value", 0) or 0)
+            live_value = float(getattr(candidate, "market_value", 0) or 0)
+            if live_value <= 0:
+                # Do not erase an existing portfolio valuation merely because
+                # that card was not encountered and priced during this scan.
+                continue
+            sheet.Cells(row, 13).Value = live_value
             condition = str(sheet.Cells(row, 19).Value or "")
             assessment = assess_candidate(candidate, context, condition_flag="UNKNOWN", condition_details=condition)
             sheet.Cells(row, 17).Value = assessment.long_term_score

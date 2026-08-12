@@ -193,13 +193,6 @@ class ExcelAdapter:
             if language and language.casefold() != "english":
                 continue
 
-            try:
-                market_value = float(row[7] or 0)
-            except (TypeError, ValueError):
-                continue
-            if market_value <= 0:
-                continue
-
             details = database.get(
                 (
                     name.casefold(),
@@ -218,10 +211,13 @@ class ExcelAdapter:
                     set_name=set_name,
                     number=number,
                     variant=variant,
-                    market_value=market_value,
-                    source=str(row[8] or ""),
-                    source_date=row[9],
-                    source_url=str(row[10] or ""),
+                    # Prices are deliberately not read from column H. Every
+                    # scan obtains the current Cardmarket 30-day average after
+                    # an eBay listing has been identified.
+                    market_value=0.0,
+                    source="",
+                    source_date=None,
+                    source_url="",
                     rarity=str(
                         details.get("rarity", "") or ""
                     ),

@@ -1,0 +1,7 @@
+Pokemon Auction Scanner - Phase 5.6.5.1
+Daily updater BAT quoting fix
+
+- Removes CMD escape characters that were leaking into PowerShell.
+- Restores simultaneous live console output and log writing.
+- Preserves the updater's Python exit code.
+- Does not modify pricing logic, workbook data, caches, or credentials.

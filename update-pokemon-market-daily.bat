@@ -12,7 +12,7 @@ echo IMPORTANT:
 echo Close Pokemon-Auction-Scanner-Dashboard.xlsx before continuing.
 echo.
 echo This update downloads the full English card catalogue,
-echo refreshes GBP reference prices, updates Excel and saves history.
+echo refreshes GBP average selling prices, updates Excel and saves history.
 echo.
 echo Interrupted downloads now resume automatically.
 echo.
@@ -28,10 +28,12 @@ if not exist "Pokemon-Auction-Scanner-Dashboard.xlsx" (
     goto :end
 )
 
-".venv\Scripts\python.exe" update_pokemon_market.py > pokemon-market-daily.log 2>&1
+echo Starting updater. Progress is shown live and saved to:
+echo   pokemon-market-daily.log
+echo.
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "& '.\.venv\Scripts\python.exe' '.\update_pokemon_market.py' 2>&1 | Tee-Object -FilePath '.\pokemon-market-daily.log'; exit $LASTEXITCODE"
 set EXITCODE=%ERRORLEVEL%
-
-type pokemon-market-daily.log
 echo.
 echo Exit code: %EXITCODE%
 

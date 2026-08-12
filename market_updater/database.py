@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS current_prices (
     original_price REAL,
     original_currency TEXT,
     source_field TEXT,
+    price_metric TEXT NOT NULL DEFAULT 'legacy',
     last_synced TEXT NOT NULL,
     PRIMARY KEY(card_id, variant)
 );
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS price_history (
     price_gbp REAL NOT NULL,
     source TEXT NOT NULL,
     source_date TEXT,
+    price_metric TEXT NOT NULL DEFAULT 'legacy',
     PRIMARY KEY(card_id, variant, observed_at)
 );
 
@@ -88,7 +90,20 @@ class MarketDatabase:
         self.connection = sqlite3.connect(path)
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA)
+        self._ensure_metric_columns()
         self.connection.commit()
+
+    def _ensure_metric_columns(self) -> None:
+        for table in ("current_prices", "price_history"):
+            columns = {
+                str(row[1])
+                for row in self.connection.execute(f"PRAGMA table_info({table})")
+            }
+            if "price_metric" not in columns:
+                self.connection.execute(
+                    f"ALTER TABLE {table} ADD COLUMN price_metric TEXT "
+                    "NOT NULL DEFAULT 'legacy'"
+                )
 
     def close(self) -> None:
         self.connection.close()
@@ -111,9 +126,14 @@ class MarketDatabase:
             rate_date=str(row["rate_date"]),
         )
 
-    def current_price_map(self) -> dict[tuple[str, str], float]:
+    def current_price_map(
+        self,
+        price_metric: str,
+    ) -> dict[tuple[str, str], float]:
         rows = self.connection.execute(
-            "SELECT card_id, variant, price_gbp FROM current_prices"
+            "SELECT card_id, variant, price_gbp FROM current_prices "
+            "WHERE price_metric = ?",
+            (price_metric,),
         ).fetchall()
         return {
             (str(row["card_id"]), str(row["variant"])): float(row["price_gbp"])
@@ -150,6 +170,7 @@ class MarketDatabase:
         prices: list[PriceVariant],
         fx: FxRates,
         changed_prices: list[dict[str, Any]],
+        price_metric: str,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
 
@@ -212,9 +233,9 @@ class MarketDatabase:
                         card_id, variant, card_name, set_id, set_name,
                         card_number, price_gbp, source, source_date,
                         source_url, original_price, original_currency,
-                        source_field, last_synced
+                        source_field, price_metric, last_synced
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         price.card_id,
@@ -230,6 +251,7 @@ class MarketDatabase:
                         price.original_price,
                         price.original_currency,
                         price.source_field,
+                        price_metric,
                         now,
                     ),
                 )
@@ -239,9 +261,9 @@ class MarketDatabase:
                     """
                     INSERT OR IGNORE INTO price_history(
                         card_id, variant, observed_at, price_gbp,
-                        source, source_date
+                        source, source_date, price_metric
                     )
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         change["card_id"],
@@ -250,6 +272,7 @@ class MarketDatabase:
                         change["current_price_gbp"],
                         change["source"],
                         change["source_date"],
+                        price_metric,
                     ),
                 )
 

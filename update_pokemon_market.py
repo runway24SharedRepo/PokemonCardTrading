@@ -20,7 +20,11 @@ from market_updater.api import (
 from market_updater.csv_export import export_latest_files
 from market_updater.database import MarketDatabase
 from market_updater.excel_writer import write_workbook
-from market_updater.pricing import PriceVariant, build_price_variants
+from market_updater.pricing import (
+    PriceVariant,
+    available_price_variants,
+    build_price_variants,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -135,6 +139,13 @@ def main() -> int:
     run_id = database.start_run()
 
     try:
+        print(
+            "Pricing policy: Cardmarket 30-day average selling price only ",
+            "(avg30 / reverseHoloAvg30)",
+            flush=True,
+        )
+        print("No secondary pricing source is used for scanner values.", flush=True)
+        print("Obtaining one documented exchange rate for this update...", flush=True)
         previous_fx = database.previous_fx_rates()
         fx = fetch_fx_rates(
             session=requests.Session(),
@@ -144,6 +155,11 @@ def main() -> int:
             usd_override=os.getenv("MARKET_USD_TO_GBP_OVERRIDE", ""),
             previous_rates=previous_fx,
         )
+        print(
+            f"FX ready: 1 EUR = {fx.eur_to_gbp:.6f} GBP "
+            f"({fx.source}; {fx.rate_date})",
+            flush=True,
+        )
 
         if args.test:
             test_result = client.test_connection()
@@ -151,7 +167,6 @@ def main() -> int:
             print(f"API key used: {'YES' if test_result['api_key_used'] else 'NO'}")
             print(f"API reported total cards: {test_result['total_count']}")
             print(f"EUR -> GBP: {fx.eur_to_gbp:.6f}")
-            print(f"USD -> GBP: {fx.usd_to_gbp:.6f}")
             database.fail_run(run_id, "Connection test only; no update performed.")
             return 0
 
@@ -162,13 +177,18 @@ def main() -> int:
         )
 
         variants_by_card: dict[str, list[PriceVariant]] = defaultdict(list)
-        prices: list[PriceVariant] = []
+        market_records: list[PriceVariant] = []
 
         for card in cards:
             card_variants = build_price_variants(card, fx, config)
             card_id = str(card.get("id", ""))
             variants_by_card[card_id].extend(card_variants)
-            prices.extend(card_variants)
+            market_records.extend(card_variants)
+
+        # Only positive Cardmarket 30-day average-selling values enter history
+        # and scanner calculations. Unavailable or ambiguous rows remain
+        # visible in Excel for audit, with a blank effective value.
+        prices = available_price_variants(market_records)
 
         prices.sort(
             key=lambda value: (
@@ -178,9 +198,19 @@ def main() -> int:
                 value.variant.casefold(),
             )
         )
+        market_records.sort(
+            key=lambda value: (
+                value.set_name.casefold(),
+                value.card_name.casefold(),
+                value.card_number.casefold(),
+                value.variant.casefold(),
+                value.selected_price_category.casefold(),
+            )
+        )
 
         observed_at = datetime.now().astimezone().isoformat(timespec="seconds")
-        previous_prices = database.current_price_map()
+        price_metric = str(config["pricing_policy"])
+        previous_prices = database.current_price_map(price_metric)
         changes = build_changes(
             prices=prices,
             previous=previous_prices,
@@ -226,6 +256,7 @@ def main() -> int:
                 backup_folder=backup_folder,
                 cards=cards,
                 prices=prices,
+                market_records=market_records,
                 variants_by_card=variants_by_card,
                 changes=changes,
                 fx=fx,
@@ -239,15 +270,19 @@ def main() -> int:
             prices=prices,
             fx=fx,
             changed_prices=changes,
+            price_metric=price_metric,
         )
 
         print()
         print("DAILY MARKET UPDATE SUCCESSFUL")
         print(f"Cards downloaded: {len(cards)}")
         print(f"Priced variants: {len(prices)}")
+        print(
+            "Unavailable/ambiguous variant records: "
+            f"{len(market_records) - len(prices)}"
+        )
         print(f"Price changes: {len(changes)}")
         print(f"EUR -> GBP: {fx.eur_to_gbp:.6f}")
-        print(f"USD -> GBP: {fx.usd_to_gbp:.6f}")
         if excel_result:
             print(
                 "Excel Market Data Import rows: "

@@ -1,0 +1,10 @@
+Pokemon Auction Scanner - Phase 5.6.5
+Exact TCGplayer Market Value updater
+
+Pricing policy:
+- Exact tcgplayer.prices.<variant>.market only
+- No high, mid, low or directLow substitution
+- No Cardmarket substitution
+- No AI pricing
+- Blank value and PRICE UNAVAILABLE when the exact market is absent
+- Manual Market Price Controls remain supported

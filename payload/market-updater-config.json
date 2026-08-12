@@ -1,0 +1,21 @@
+{
+  "pokemon_tcg_api_url": "https://api.pokemontcg.io/v2/cards",
+  "page_size": 250,
+  "request_delay_with_key_seconds": 0.15,
+  "request_delay_without_key_seconds": 2.15,
+  "request_timeout_seconds": 60,
+  "retry_attempts": 5,
+  "preferred_currency": "GBP",
+  "fx_api_url": "https://api.frankfurter.dev/v1/latest?base=EUR&symbols=GBP,USD",
+  "workbook_filename": "Pokemon-Auction-Scanner-Dashboard.xlsx",
+  "market_import_sheet": "Market Data Import",
+  "full_database_sheet": "Full Card Database",
+  "price_changes_sheet": "Market Price Changes",
+  "summary_sheet": "Market Update Summary",
+  "price_log_sheet": "Price Import Log",
+  "price_change_tolerance_gbp": 0.01,
+  "maximum_change_rows_in_excel": 25000,
+  "backup_existing_market_rows": true,
+  "save_compressed_api_snapshot": true,
+  "pricing_policy": "cardmarket_30_day_average_selling_price_only"
+}

@@ -1,0 +1,11 @@
+Pokemon Auction Scanner Phase 5.6.7
+30-Day Average Selling Price Authority
+
+Column H source:
+- Standard Unlimited finish: cardmarket.prices.avg30
+- Reverse Holofoil: cardmarket.prices.reverseHoloAvg30
+- First Edition or ambiguous finish: PRICE UNAVAILABLE
+- Verified Market Price Controls: retained as explicit overrides
+
+All Live, Random Range Sniper, Seller Radar and long-term calculations continue
+to read Market Data Import column H and therefore use this rolling metric.

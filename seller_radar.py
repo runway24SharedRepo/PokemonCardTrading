@@ -35,6 +35,7 @@ from random_sniper.seller_discovery import (
 from seller_radar_client import SellerRadarClient
 from seller_radar_excel import SellerRadarExcelAdapter
 from seller_radar_history import SellerRadarHistory
+from on_demand_pricing import OnDemandPriceResolver
 
 
 DEFAULT_LISTING_COUNT = 50
@@ -183,6 +184,7 @@ def main() -> int:
 
     excel = None
     client = None
+    price_resolver = None
 
     try:
         logger.info(
@@ -191,7 +193,7 @@ def main() -> int:
             requested,
         )
         logger.info(
-            "Opening Excel and loading the market database..."
+            "Opening Excel and loading the card identity index..."
         )
 
         excel = SellerRadarExcelAdapter(
@@ -199,6 +201,7 @@ def main() -> int:
         )
         settings = excel.read_settings()
         candidates = excel.read_candidates()
+        price_resolver = OnDemandPriceResolver(root, logger)
 
         # Seller Radar should evaluate every price-bearing card found rather
         # than hide listings merely because the Random Sniper's postage cap
@@ -211,7 +214,7 @@ def main() -> int:
         radar_settings.expand_green_sellers = False
 
         logger.info(
-            "Market database ready: %s priced card variants.",
+            "Card identity index ready: %s variants; stored prices ignored.",
             len(candidates),
         )
         logger.info(
@@ -252,6 +255,7 @@ def main() -> int:
             ).strip() or "pokemon",
         )
         items = batch.items
+        price_resolver.set_expected_quotes(len(items))
 
         logger.info(
             "FETCH COMPLETE | selected unseen=%s | examined=%s | "
@@ -361,6 +365,18 @@ def main() -> int:
                     str(item.get("itemId", "") or "")
                 ] = {
                     "matched": False,
+                    "decision": "",
+                    "reason": reason,
+                    "listing_type": listing_type(item),
+                }
+                continue
+
+            quote = price_resolver.apply(candidate)
+            if not quote.available:
+                reason = quote.reason or quote.status
+                unmatched.append(unmatched_row(item, reason))
+                outcomes[str(item.get("itemId", "") or "")] = {
+                    "matched": True,
                     "decision": "",
                     "reason": reason,
                     "listing_type": listing_type(item),
@@ -481,6 +497,7 @@ def main() -> int:
             red,
             len(unmatched),
         )
+        logger.info("ON-DEMAND PRICING | %s", price_resolver.summary())
 
         watchlist_summary = sync_green_results(
             results,
@@ -614,6 +631,7 @@ def main() -> int:
         print(
             f"eBay Watchlist: {watchlist_summary.display}"
         )
+        print(f"On-demand pricing: {price_resolver.summary()}")
         return 0
 
     except KeyboardInterrupt:
@@ -630,6 +648,8 @@ def main() -> int:
         return 1
 
     finally:
+        if price_resolver is not None:
+            price_resolver.close()
         if client is not None:
             client.close()
         if excel is not None:

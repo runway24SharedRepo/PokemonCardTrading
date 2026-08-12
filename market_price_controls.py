@@ -18,7 +18,7 @@ CONTROL_HEADERS = [
     "Set Name",
     "Card Number",
     "Variant",
-    "Override Market Value (£)",
+    "Override Average Selling Price (£)",
     "Override Source",
     "Source URL",
     "Source Date",
@@ -133,7 +133,7 @@ def ensure_controls_sheet(
 
         sheet.Range("A1:N1").Merge()
         sheet.Cells(1, 1).Value = (
-            "Market Price Controls — "
+            "Average Selling Price Controls — "
             "Verified Overrides"
         )
         sheet.Range(
@@ -152,7 +152,7 @@ def ensure_controls_sheet(
 
         sheet.Range("A2:N2").Merge()
         sheet.Cells(2, 1).Value = (
-            "Market Data Import column H is "
+            "Market Data Import column H is the Average Selling Price and "
             "the scanner's single source of truth. "
             "Add exact card-ID + variant overrides "
             "here. PriceCharting values can be "
@@ -176,6 +176,20 @@ def ensure_controls_sheet(
         ).Value = (
             tuple(CONTROL_HEADERS),
         )
+
+    # Refresh labels without clearing existing user-entered controls.
+    sheet.Cells(1, 1).Value = (
+        "Average Selling Price Controls — Verified Overrides"
+    )
+    sheet.Cells(2, 1).Value = (
+        "Market Data Import column H is the Average Selling Price and the "
+        "scanner's single source of truth. Add exact card-ID + variant "
+        "overrides here only when you have verified a better value."
+    )
+    sheet.Range(
+        sheet.Cells(4, 1),
+        sheet.Cells(4, len(CONTROL_HEADERS)),
+    ).Value = (tuple(CONTROL_HEADERS),)
 
     header = sheet.Range(
         sheet.Cells(4, 1),
@@ -338,10 +352,8 @@ def resolve_effective_value(
     )
 
     if control is None:
-        if "TCGplayer" in base_source:
-            status = "TCGPLAYER PRIMARY"
-        elif "Cardmarket" in base_source:
-            status = "CARDMARKET FALLBACK"
+        if "Cardmarket" in base_source:
+            status = "CARDMARKET AVERAGE SELL"
         else:
             status = "IMPORTED SOURCE"
 
