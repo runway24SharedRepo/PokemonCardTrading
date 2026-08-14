@@ -1,0 +1,25 @@
+Pokemon Auction Scanner Phase 5.7.6
+No Scanner Watchlist Writes
+
+- Live Radar and Random Range Sniper never call eBay watchlist write APIs.
+- Removes the legacy sync_green_results imports and automatic GREEN-result sync.
+- Removes obsolete eBay Watchlist summary lines from these two scanner modes.
+- Preserves eBay discovery, exact-card matching, Cardmarket avg30 pricing,
+  workbook output, manual links, Random Snipe Queue and optional workbook-only
+  copying to the main Snipe Queue.
+- The dedicated two-minute PokeBid automation is now the only intended eBay
+  Watchlist writer.
+
+Phase 5.7.5 pricing behaviour is retained:
+
+- Uses three validated request paths instead of repeating one failing URL:
+  compact single-card, full single-card and exact-ID collection query.
+- Recovers transient HTTP 429/500/502/503/504 and connection failures.
+- Uses short exponential backoff with jitter.
+- Emits one warning only after all attempts fail.
+- Successful retry results are cached for 24 hours like first-attempt results.
+- Failed cards become eligible again after 60 seconds by default.
+- Installer clears old failure checkpoints but preserves successful prices.
+- Summary separates retry calls, alternate-path recoveries and final failures.
+- Pricing authority remains Cardmarket avg30/reverseHoloAvg30 embedded in the
+  Pokemon TCG API response, with no static workbook fallback.

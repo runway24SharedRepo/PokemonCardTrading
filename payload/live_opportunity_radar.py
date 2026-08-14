@@ -35,7 +35,6 @@ from live_radar.ebay_client import (
     EbayBrowseClient,
 )
 from live_radar.excel_adapter import ExcelAdapter
-from ebay_watchlist import sync_green_results
 from on_demand_pricing import OnDemandPriceResolver
 
 
@@ -873,13 +872,6 @@ def main() -> int:
             seller_discoveries,
         )[: settings.maximum_live_rows]
 
-        watchlist_summary = sync_green_results(
-            final_results,
-            root=root,
-            source="LIVE RADAR",
-            logger=logger,
-        )
-
         logger.info(
             "WRITING EXCEL | %s live opportunity row(s).",
             len(final_results),
@@ -979,7 +971,6 @@ def main() -> int:
             f"API calls: {budget.used}/"
             f"{budget.maximum_calls}"
         )
-        print(f"eBay Watchlist: {watchlist_summary.display}")
         print(f"On-demand pricing: {price_resolver.summary()}")
         return 0
 

@@ -14,6 +14,7 @@ from edition_safety import (
     preferred_result_image,
     safe_reference_image_url,
 )
+from custom_input import parse_market_data_references
 
 from .core import (
     parse_cooldown_days,
@@ -55,7 +56,24 @@ class ExcelAdapter:
         self.book.Save()
 
     def sheet(self, name: str):
-        return self.book.Worksheets(name)
+        wanted = self._normalise_sheet_name(name)
+        available: list[str] = []
+        for index in range(1, int(self.book.Worksheets.Count) + 1):
+            worksheet = self.book.Worksheets(index)
+            actual = str(worksheet.Name)
+            available.append(actual)
+            if self._normalise_sheet_name(actual) == wanted:
+                return worksheet
+        raise RuntimeError(
+            f"Worksheet '{name}' was not found. Available worksheets: "
+            + ", ".join(available)
+        )
+
+    @staticmethod
+    def _normalise_sheet_name(value: Any) -> str:
+        return " ".join(
+            str(value or "").replace("\xa0", " ").split()
+        ).casefold()
 
     @staticmethod
     def _last_row(sheet, column: int = 1) -> int:
@@ -445,6 +463,140 @@ class ExcelAdapter:
 
         return output
 
+    def read_custom_candidates(
+        self,
+        input_path: Path,
+    ) -> list[Candidate]:
+        """Read exact selected cards and manual reference prices from column H."""
+
+        references = parse_market_data_references(
+            input_path.read_text(encoding="utf-8-sig")
+        )
+        database = self.read_full_database()
+        sheet = self.sheet("Market Data Import")
+        candidates: list[Candidate] = []
+        identities: dict[str, str] = {}
+
+        for reference, row_number in references:
+            row = self._as_rows(
+                sheet.Range(f"A{row_number}:L{row_number}").Value
+            )[0]
+            name = str(row[1] or "").strip()
+            set_name = str(row[2] or "").strip()
+            number = normalize_card_number(row[3])
+            variant = str(row[4] or "").strip()
+            language = str(row[5] or "").strip()
+
+            if not name or not set_name or not number or not variant:
+                raise ValueError(
+                    f"{reference} does not identify a complete card. "
+                    "Columns B, C, D and E must contain name, set, number and variant."
+                )
+            if language and language.casefold() != "english":
+                raise ValueError(
+                    f"{reference} is {language}, not English."
+                )
+
+            raw_price = row[7]
+            if isinstance(raw_price, str):
+                raw_price = (
+                    raw_price.replace("£", "")
+                    .replace(",", "")
+                    .strip()
+                )
+            try:
+                market_value = float(raw_price)
+            except (TypeError, ValueError):
+                market_value = 0.0
+            if market_value <= 0:
+                raise ValueError(
+                    f"{reference} must contain a positive manual reference cost."
+                )
+
+            key = (
+                name.casefold(),
+                set_name.casefold(),
+                number.casefold(),
+            )
+            details = database.get(key, {})
+            candidate = Candidate(
+                card_id=str(details.get("card_id", "") or ""),
+                name=name,
+                set_name=set_name,
+                number=number,
+                variant=variant,
+                market_value=round(market_value, 2),
+                source=f"Manual Market Data Import {reference}",
+                source_date=None,
+                source_url="",
+                rarity=str(details.get("rarity", "") or ""),
+                supertype=str(details.get("supertype", "") or ""),
+                release_date=details.get("release_date"),
+                image_url=str(details.get("image_url", "") or ""),
+            )
+            old_reference = identities.get(candidate.identity)
+            if old_reference:
+                raise ValueError(
+                    f"{reference} duplicates the same exact card already selected "
+                    f"by {old_reference}."
+                )
+            identities[candidate.identity] = reference
+            candidates.append(candidate)
+
+        return candidates
+
+    def ensure_custom_result_sheets(self) -> None:
+        """Create custom result sheets by copying the established templates."""
+
+        existing = {
+            self._normalise_sheet_name(self.book.Worksheets(index).Name)
+            for index in range(1, int(self.book.Worksheets.Count) + 1)
+        }
+        for sheet_name, template_name in (
+            ("Custom Live Results", "Random Snipe Results"),
+            ("Custom Live Queue", "Random Snipe Queue"),
+        ):
+            normalised_name = self._normalise_sheet_name(sheet_name)
+            if normalised_name in existing:
+                continue
+            template = self.sheet(template_name)
+            previous_count = int(self.book.Worksheets.Count)
+            last_sheet = self.book.Worksheets(previous_count)
+            # pywin32 dynamic dispatch can silently ignore the named After=
+            # argument on Worksheet.Copy. Positional COM arguments are stable:
+            # Copy(Before, After), hence the leading None.
+            template.Copy(None, last_sheet)
+            if int(self.book.Worksheets.Count) != previous_count + 1:
+                # Defensive fallback: create a worksheet explicitly and copy
+                # the used template range. This keeps the scan functional on
+                # Excel builds that do not honour Worksheet.Copy through COM.
+                created = self.book.Worksheets.Add(None, last_sheet, 1)
+                if int(self.book.Worksheets.Count) != previous_count + 1:
+                    protected = bool(getattr(self.book, "ProtectStructure", False))
+                    raise RuntimeError(
+                        f"Excel could not create worksheet '{sheet_name}'. "
+                        f"Workbook structure protected={protected}."
+                    )
+                template.UsedRange.Copy(created.Cells(1, 1))
+                for column in range(1, 66):
+                    created.Columns(column).ColumnWidth = (
+                        template.Columns(column).ColumnWidth
+                    )
+                self.excel.CutCopyMode = False
+            else:
+                created = self.book.Worksheets(previous_count + 1)
+            created.Name = sheet_name
+            try:
+                created.Cells(1, 1).Value = sheet_name
+            except Exception:
+                pass
+            existing.add(normalised_name)
+
+        # Resolve by enumeration rather than Worksheets("name"). This catches
+        # COM rename/copy failures before any result data is cleared or written.
+        self.sheet("Custom Live Results")
+        self.sheet("Custom Live Queue")
+
     def clear_selected_rows(self) -> None:
         sheet = self.sheet("Random Range Sniper")
         sheet.Range("A24:AQ273").ClearContents()
@@ -772,6 +924,18 @@ class ExcelAdapter:
         results: list[ListingResult],
     ) -> None:
         self._write_result_sheet("Random Snipe Queue", results)
+
+    def write_custom_live_results(
+        self,
+        results: list[ListingResult],
+    ) -> None:
+        self._write_result_sheet("Custom Live Results", results)
+
+    def write_custom_live_queue(
+        self,
+        results: list[ListingResult],
+    ) -> None:
+        self._write_result_sheet("Custom Live Queue", results)
 
     def append_history(
         self,

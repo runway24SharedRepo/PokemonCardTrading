@@ -1,0 +1,10 @@
+# CUSTOM LIVE SCAN CARD LIST
+#
+# Add one Market Data Import column-H reference per line.
+# The scanner reads the card name/set/number/variant from columns B-E
+# and the current manual reference cost from column H on the same row.
+# Blank lines and text after # are ignored.
+#
+# Example selections:
+H1810
+H1811

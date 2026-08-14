@@ -1,0 +1,16 @@
+Pokemon Auction Scanner Phase 5.8.2
+Excel COM Worksheet-Copy Hotfix
+
+- Adds liveScanCustom.bat and pokemonInput.txt.
+- Resolves exact cards from Market Data Import B-F using selected H-row cells.
+- Uses the manually maintained column-H value as the reference price.
+- Searches only the selected exact cards on eBay UK.
+- Creates Custom Live Results and Custom Live Queue sheets.
+- Uses staging-workbook safety; failed scans do not replace the workbook.
+- Performs no on-demand price lookup and no eBay Watchlist writes.
+- Preserves Phase 5.7.6 Watchlist isolation for ordinary Live and Random scans.
+- Resolves worksheet objects by normalised enumeration instead of unreliable
+  Excel COM string lookup.
+- Validates both Custom Live tabs immediately after template copying.
+- Uses positional Worksheet.Copy arguments required by pywin32 dynamic COM.
+- Falls back to Worksheets.Add plus template-range copying when necessary.

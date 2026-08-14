@@ -36,7 +36,6 @@ from random_sniper.seller_discovery import (
     CandidateTitleMatcher,
     group_queue_results,
 )
-from ebay_watchlist import sync_green_results
 from on_demand_pricing import OnDemandPriceResolver
 
 
@@ -339,14 +338,19 @@ def evaluate_item(
             "Auction is outside the configured sniping window of "
             f"{settings.ending_within_hours:g} hours"
         )
-    notes_parts.append(
-        "Valuation: Cardmarket 30-day average fetched on demand"
-        + (
-            f"; provider updated {candidate.source_date}"
-            if candidate.source_date
-            else ""
+    if str(candidate.source or "").startswith("Manual Market Data Import H"):
+        notes_parts.append(
+            f"Valuation: {candidate.source} column-H manual reference"
         )
-    )
+    else:
+        notes_parts.append(
+            "Valuation: Cardmarket 30-day average fetched on demand"
+            + (
+                f"; provider updated {candidate.source_date}"
+                if candidate.source_date
+                else ""
+            )
+        )
 
     return ListingResult(
         candidate=candidate,
@@ -954,13 +958,6 @@ def main() -> int:
             seller_queue,
         )
 
-        watchlist_summary = sync_green_results(
-            all_results,
-            root=root,
-            source="RANDOM SNIPER",
-            logger=logger,
-        )
-
         excel.write_selected_cards(attempts)
         excel.write_results(all_results)
         excel.write_random_snipe_queue(random_queue)
@@ -1023,7 +1020,6 @@ def main() -> int:
         print(f"Matched live listings: {len(all_results)}")
         print(f"Random Snipe Queue rows: {len(random_queue)}")
         print(f"Seller opportunities added: {seller_opportunities_added}")
-        print(f"eBay Watchlist: {watchlist_summary.display}")
         print(
             "Strong long-term opportunities (score 80+): "
             f"{sum(item.long_term_score >= 80 for item in all_results)}"

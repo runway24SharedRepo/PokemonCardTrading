@@ -1,0 +1,16 @@
+name = "pokebid-ebay-automation"
+main = "src/worker.js"
+compatibility_date = "2026-08-01"
+
+[triggers]
+crons = ["*/2 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "pokebid-ebay-automation"
+database_id = "a433c0f3-65ac-499b-a31d-8eb4c1ae17fe"
+
+[vars]
+EBAY_MARKETPLACE_ID = "EBAY_GB"
+EBAY_SITE_ID = "3"
+MAX_RESULTS_PER_SEARCH = "50"

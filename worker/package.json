@@ -1,0 +1,12 @@
+{
+  "name": "pokebid-ebay-automation-name-match",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/matcher.test.mjs && node test/policy.test.mjs",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
